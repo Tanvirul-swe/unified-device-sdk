@@ -44,11 +44,11 @@ class ResponseManager {
     FrameBuffer? frameBuffer,
     SequenceGenerator? sequenceGenerator,
     int protocolVersion = 1,
-  })  : _transport = transport,
-        _frameBuilder = frameBuilder ?? FrameBuilder(),
-        _frameBuffer = frameBuffer ?? FrameBuffer(),
-        _sequenceGenerator = sequenceGenerator ?? SequenceGenerator(),
-        _protocolVersion = protocolVersion {
+  }) : _transport = transport,
+       _frameBuilder = frameBuilder ?? FrameBuilder(),
+       _frameBuffer = frameBuffer ?? FrameBuffer(),
+       _sequenceGenerator = sequenceGenerator ?? SequenceGenerator(),
+       _protocolVersion = protocolVersion {
     _bindTransport();
   }
 
@@ -66,15 +66,13 @@ class ResponseManager {
       processIncomingBytes,
     );
 
-    _connectionSubscription = _transport.connectionState.listen(
-      (state) {
-        if (state == DeviceConnectionState.disconnected ||
-            state == DeviceConnectionState.connectionLost) {
-          failAllPendingOnDisconnect(state);
-          _frameBuffer.clear();
-        }
-      },
-    );
+    _connectionSubscription = _transport.connectionState.listen((state) {
+      if (state == DeviceConnectionState.disconnected ||
+          state == DeviceConnectionState.connectionLost) {
+        failAllPendingOnDisconnect(state);
+        _frameBuffer.clear();
+      }
+    });
   }
 
   /// Sends a command frame and tracks its expected response lifecycle.
@@ -92,7 +90,10 @@ class ResponseManager {
     _throwIfDisposed();
 
     final sequence = _sequenceGenerator.next();
-    final effectiveOptions = _resolveOptions(timeout: timeout, options: options);
+    final effectiveOptions = _resolveOptions(
+      timeout: timeout,
+      options: options,
+    );
     final pending = PendingRequest(
       sequence: sequence,
       productId: productId,
@@ -119,9 +120,8 @@ class ResponseManager {
 
     try {
       await _transport.write(frameBytes);
-    } on Object catch (error, stackTrace) {
+    } on Object {
       _pendingRequests.remove(sequence);
-      pending.completeError(error, stackTrace);
       rethrow;
     }
 
@@ -155,18 +155,12 @@ class ResponseManager {
     await _transport.write(_frameBuilder.buildFromFrame(frame));
   }
 
-  CommandOptions _resolveOptions({
-    Duration? timeout,
-    CommandOptions? options,
-  }) {
+  CommandOptions _resolveOptions({Duration? timeout, CommandOptions? options}) {
     if (options != null) {
       if (timeout == null) {
         return options;
       }
-      return options.copyWith(
-        ackTimeout: timeout,
-        dataTimeout: timeout,
-      );
+      return options.copyWith(ackTimeout: timeout, dataTimeout: timeout);
     }
 
     final effectiveTimeout = timeout ?? defaultTimeout;
@@ -241,7 +235,9 @@ class ResponseManager {
     pending.completeError(
       ProtocolException(
         response.errorMessage ?? 'Device returned NACK',
-        errorCode: response.payload.isNotEmpty ? response.payload.first : response.flags,
+        errorCode: response.payload.isNotEmpty
+            ? response.payload.first
+            : response.flags,
         protocolErrorType: ProtocolErrorType.nackReceived,
       ),
     );

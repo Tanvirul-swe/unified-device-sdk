@@ -132,7 +132,11 @@ void main() {
         future,
         throwsA(
           isA<ProtocolException>()
-              .having((e) => e.protocolErrorType, 'type', ProtocolErrorType.nackReceived)
+              .having(
+                (e) => e.protocolErrorType,
+                'type',
+                ProtocolErrorType.nackReceived,
+              )
               .having((e) => e.errorCode, 'errorCode', 0x7F),
         ),
       );
@@ -221,14 +225,33 @@ void main() {
       );
     });
 
+    test(
+      'write startup failure is propagated once and clears pending request',
+      () async {
+        transport.simulateErrors = true;
+        final uncaughtErrors = <Object>[];
+
+        await runZonedGuarded(
+          () async {
+            final future = manager.sendCommand(commandId: 0x62);
+            await expectLater(future, throwsA(isA<Exception>()));
+            await _flushMicrotasks();
+          },
+          (error, _) {
+            uncaughtErrors.add(error);
+          },
+        );
+
+        expect(manager.pendingCount, 0);
+        expect(uncaughtErrors, isEmpty);
+      },
+    );
+
     test('disconnect fails pending requests', () async {
       final future = manager.sendCommand(commandId: 0x71);
       transport.simulateConnectionState(DeviceConnectionState.disconnected);
 
-      await expectLater(
-        future,
-        throwsA(isA<TransportException>()),
-      );
+      await expectLater(future, throwsA(isA<TransportException>()));
     });
 
     test('sequence matching keeps requests isolated', () async {

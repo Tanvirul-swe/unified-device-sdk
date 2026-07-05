@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:unified_device_sdk/unified_device_sdk.dart';
 
 class DebugConsoleScreen extends StatefulWidget {
@@ -42,21 +43,26 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
   final List<_LogEntry> _errorLog = <_LogEntry>[];
   final List<int> _debugInputBuffer = <int>[];
 
-  final TextEditingController _productIdController =
-      TextEditingController(text: '0000');
-  final TextEditingController _opController =
-      TextEditingController(text: 'A5');
-  final TextEditingController _commandIdController =
-      TextEditingController(text: '00');
-  final TextEditingController _addressController =
-      TextEditingController(text: '00000000');
-  final TextEditingController _flagsController =
-      TextEditingController(text: '00');
+  final TextEditingController _productIdController = TextEditingController(
+    text: '0000',
+  );
+  final TextEditingController _opController = TextEditingController(text: 'A5');
+  final TextEditingController _commandIdController = TextEditingController(
+    text: '00',
+  );
+  final TextEditingController _addressController = TextEditingController(
+    text: '00000000',
+  );
+  final TextEditingController _flagsController = TextEditingController(
+    text: '00',
+  );
   final TextEditingController _payloadController = TextEditingController();
-  final TextEditingController _ackTimeoutController =
-      TextEditingController(text: '5000');
-  final TextEditingController _dataTimeoutController =
-      TextEditingController(text: '5000');
+  final TextEditingController _ackTimeoutController = TextEditingController(
+    text: '5000',
+  );
+  final TextEditingController _dataTimeoutController = TextEditingController(
+    text: '5000',
+  );
 
   String? _platformVersion;
   bool? _bluetoothAvailable;
@@ -83,31 +89,39 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
     _frameParser = FrameParser();
     _sequenceGenerator = SequenceGenerator();
     _client = UnifiedDeviceClient(
-      UnifiedDeviceClientConfig(
-        transport: BleTransport(platform: _platform),
-      ),
+      UnifiedDeviceClientConfig(transport: BleTransport(platform: _platform)),
     );
     _subscriptions = <StreamSubscription<dynamic>>[
-      _client.discoveredDevices.listen(_handleDeviceDiscovered,
-          onError: (Object error, StackTrace stackTrace) {
-        _recordError('scan', error, stackTrace);
-      }),
-      _client.connectionState.listen(_handleConnectionStateChanged,
-          onError: (Object error, StackTrace stackTrace) {
-        _recordError('connection', error, stackTrace);
-      }),
-      _client.transport.incomingBytes.listen(_handleIncomingBytes,
-          onError: (Object error, StackTrace stackTrace) {
-        _recordError('bytes', error, stackTrace);
-      }),
-      _client.frames.listen(_handleParsedFrame,
-          onError: (Object error, StackTrace stackTrace) {
-        _recordError('frames', error, stackTrace);
-      }),
-      _client.events.listen(_handleEvent,
-          onError: (Object error, StackTrace stackTrace) {
-        _recordError('events', error, stackTrace);
-      }),
+      _client.discoveredDevices.listen(
+        _handleDeviceDiscovered,
+        onError: (Object error, StackTrace stackTrace) {
+          _recordError('scan', error, stackTrace);
+        },
+      ),
+      _client.connectionState.listen(
+        _handleConnectionStateChanged,
+        onError: (Object error, StackTrace stackTrace) {
+          _recordError('connection', error, stackTrace);
+        },
+      ),
+      _client.transport.incomingBytes.listen(
+        _handleIncomingBytes,
+        onError: (Object error, StackTrace stackTrace) {
+          _recordError('bytes', error, stackTrace);
+        },
+      ),
+      _client.frames.listen(
+        _handleParsedFrame,
+        onError: (Object error, StackTrace stackTrace) {
+          _recordError('frames', error, stackTrace);
+        },
+      ),
+      _client.events.listen(
+        _handleEvent,
+        onError: (Object error, StackTrace stackTrace) {
+          _recordError('events', error, stackTrace);
+        },
+      ),
     ];
 
     if (widget.enablePlatformBootstrap) {
@@ -209,7 +223,11 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
   Future<void> _connectSelectedDevice() async {
     final device = _selectedDevice;
     if (device == null) {
-      _recordError('connect', StateError('No device selected'), StackTrace.current);
+      _recordError(
+        'connect',
+        StateError('No device selected'),
+        StackTrace.current,
+      );
       return;
     }
 
@@ -241,11 +259,16 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
       final flags = _parseHexField(_flagsController.text, 'flags');
       final payload = _parseHexBytes(_payloadController.text);
       final ackTimeout = Duration(
-        milliseconds: _parseDurationMs(_ackTimeoutController.text, 'ackTimeout'),
+        milliseconds: _parseDurationMs(
+          _ackTimeoutController.text,
+          'ackTimeout',
+        ),
       );
       final dataTimeout = Duration(
-        milliseconds:
-            _parseDurationMs(_dataTimeoutController.text, 'dataTimeout'),
+        milliseconds: _parseDurationMs(
+          _dataTimeoutController.text,
+          'dataTimeout',
+        ),
       );
 
       setState(() {
@@ -351,10 +374,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
   void _handleIncomingBytes(List<int> bytes) {
     _pushLimited(
       _receivedChunks,
-      _HexEntry(
-        label: '${bytes.length} bytes',
-        hex: _toHex(bytes),
-      ),
+      _HexEntry(label: '${bytes.length} bytes', hex: _toHex(bytes)),
     );
 
     _debugInputBuffer.addAll(bytes);
@@ -376,8 +396,10 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
         break;
       }
 
-      final declaredPayloadLength =
-          EndianUtils.bytesToUint16BE(_debugInputBuffer, 12);
+      final declaredPayloadLength = EndianUtils.bytesToUint16BE(
+        _debugInputBuffer,
+        12,
+      );
       final totalFrameSize =
           _headerBytes + declaredPayloadLength + ProtocolConstants.trailerSize;
       if (_debugInputBuffer.length < totalFrameSize) {
@@ -392,11 +414,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
         _frameParser.parse(candidate);
         _pushLimited(
           _crcEntries,
-          _CrcEntry(
-            hex: hex,
-            result: 'CRC valid',
-            isValid: true,
-          ),
+          _CrcEntry(hex: hex, result: 'CRC valid', isValid: true),
         );
       } on CrcException catch (error) {
         _pushLimited(
@@ -411,11 +429,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
       } on Object catch (error) {
         _pushLimited(
           _crcEntries,
-          _CrcEntry(
-            hex: hex,
-            result: 'Frame invalid: $error',
-            isValid: false,
-          ),
+          _CrcEntry(hex: hex, result: 'Frame invalid: $error', isValid: false),
         );
       }
     }
@@ -428,10 +442,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
   void _handleParsedFrame(DeviceFrame frame) {
     _pushLimited(
       _parsedFrames,
-      _ParsedFrameEntry(
-        frame: frame,
-        hex: frame.toHexString(),
-      ),
+      _ParsedFrameEntry(frame: frame, hex: frame.toHexString()),
     );
 
     final bucketEntry = _FrameBucketEntry(
@@ -470,16 +481,58 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
   }
 
   void _recordError(String scope, Object error, StackTrace stackTrace) {
+    final message = _formatErrorMessage(error);
+    _pushLimited(_errorLog, _LogEntry(scope: scope, message: message));
     _pushLimited(
-      _errorLog,
-      _LogEntry(
-        scope: scope,
-        message: '$error',
-      ),
+      _commandLog,
+      _LogEntry(scope: 'error:$scope', message: message),
     );
+    debugPrint('[UnifiedDeviceExample][$scope] $message');
+    debugPrintStack(stackTrace: stackTrace);
     if (mounted) {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      messenger
+        ?..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+        );
       setState(() {});
     }
+  }
+
+  String _formatErrorMessage(Object error) {
+    if (error is PlatformException) {
+      final buffer = StringBuffer('Platform error');
+      if (error.code.isNotEmpty) {
+        buffer.write(' [${error.code}]');
+      }
+      if (error.message != null && error.message!.isNotEmpty) {
+        buffer.write(': ${error.message}');
+      }
+      final details = _formatErrorDetails(error.details);
+      if (details != null) {
+        buffer.write(' | $details');
+      }
+      return buffer.toString();
+    }
+    return error.toString();
+  }
+
+  String? _formatErrorDetails(Object? details) {
+    if (details == null) {
+      return null;
+    }
+    if (details is Map) {
+      final entries = details.entries
+          .where((entry) => entry.value != null)
+          .map((entry) => '${entry.key}=${entry.value}')
+          .toList();
+      if (entries.isEmpty) {
+        return null;
+      }
+      return entries.join(', ');
+    }
+    return details.toString();
   }
 
   void _clearLogs() {
@@ -549,41 +602,38 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        _buildSummaryGrid(
-          context,
-          [
-            _SummaryTile(
-              label: 'Platform',
-              value: _platformVersion ?? 'Unknown',
-              accent: const Color(0xFF006C67),
-            ),
-            _SummaryTile(
-              label: 'Bluetooth Available',
-              value: _describeBool(_bluetoothAvailable),
-              accent: const Color(0xFF004B87),
-            ),
-            _SummaryTile(
-              label: 'Bluetooth Enabled',
-              value: _describeBool(_bluetoothEnabled),
-              accent: const Color(0xFF9A4D00),
-            ),
-            _SummaryTile(
-              label: 'Permissions',
-              value: _describeBool(_permissionsGranted),
-              accent: const Color(0xFF5E3B76),
-            ),
-            _SummaryTile(
-              label: 'Connection',
-              value: _connectionState.name,
-              accent: const Color(0xFF8A2E2E),
-            ),
-            _SummaryTile(
-              label: 'Selected Device',
-              value: _selectedDevice?.name ?? _selectedDevice?.deviceId ?? 'None',
-              accent: const Color(0xFF306850),
-            ),
-          ],
-        ),
+        _buildSummaryGrid(context, [
+          _SummaryTile(
+            label: 'Platform',
+            value: _platformVersion ?? 'Unknown',
+            accent: const Color(0xFF006C67),
+          ),
+          _SummaryTile(
+            label: 'Bluetooth Available',
+            value: _describeBool(_bluetoothAvailable),
+            accent: const Color(0xFF004B87),
+          ),
+          _SummaryTile(
+            label: 'Bluetooth Enabled',
+            value: _describeBool(_bluetoothEnabled),
+            accent: const Color(0xFF9A4D00),
+          ),
+          _SummaryTile(
+            label: 'Permissions',
+            value: _describeBool(_permissionsGranted),
+            accent: const Color(0xFF5E3B76),
+          ),
+          _SummaryTile(
+            label: 'Connection',
+            value: _connectionState.name,
+            accent: const Color(0xFF8A2E2E),
+          ),
+          _SummaryTile(
+            label: 'Selected Device',
+            value: _selectedDevice?.name ?? _selectedDevice?.deviceId ?? 'None',
+            accent: const Color(0xFF306850),
+          ),
+        ]),
         const SizedBox(height: 16),
         Wrap(
           spacing: 12,
@@ -630,7 +680,9 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
               Expanded(
                 child: FilledButton.icon(
                   onPressed: _toggleScan,
-                  icon: Icon(_isScanning ? Icons.stop_circle : Icons.bluetooth_searching),
+                  icon: Icon(
+                    _isScanning ? Icons.stop_circle : Icons.bluetooth_searching,
+                  ),
                   label: Text(_isScanning ? 'Stop Scan' : 'Start Scan'),
                 ),
               ),
@@ -652,9 +704,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
         ),
         Expanded(
           child: devices.isEmpty
-              ? const Center(
-                  child: Text('No devices discovered yet.'),
-                )
+              ? const Center(child: Text('No devices discovered yet.'))
               : ListView.separated(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                   itemCount: devices.length,
@@ -708,9 +758,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
 
   Widget _buildDeviceTab(BuildContext context, DiscoveredDevice? device) {
     if (device == null) {
-      return const Center(
-        child: Text('Select a device from the Scan tab.'),
-      );
+      return const Center(child: Text('Select a device from the Scan tab.'));
     }
 
     return ListView(
@@ -729,10 +777,13 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
                 const SizedBox(height: 12),
                 _buildKeyValue('Device ID', device.deviceId),
                 _buildKeyValue('RSSI', '${device.rssi} dBm'),
-                _buildKeyValue('Manufacturer Data',
-                    device.manufacturerData == null || device.manufacturerData!.isEmpty
-                        ? 'None'
-                        : _toHex(device.manufacturerData!)),
+                _buildKeyValue(
+                  'Manufacturer Data',
+                  device.manufacturerData == null ||
+                          device.manufacturerData!.isEmpty
+                      ? 'None'
+                      : _toHex(device.manufacturerData!),
+                ),
                 _buildKeyValue(
                   'Service UUIDs',
                   device.serviceUuids.isEmpty
@@ -880,7 +931,9 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    onPressed: _isConnected && !_isSending ? _sendCommand : null,
+                    onPressed: _isConnected && !_isSending
+                        ? _sendCommand
+                        : null,
                     icon: const Icon(Icons.send),
                     label: Text(_isSending ? 'Sending...' : 'Send Command'),
                   ),
@@ -1019,10 +1072,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
       context,
       title: title,
       child: entries.isEmpty
-          ? Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(emptyText),
-            )
+          ? Padding(padding: const EdgeInsets.all(16), child: Text(emptyText))
           : Column(
               children: entries
                   .map(
@@ -1093,19 +1143,45 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
                   .map(
                     (entry) => ExpansionTile(
                       title: Text(
-                        '${entry.frame.isAck ? 'ACK' : entry.frame.isNack ? 'NACK' : entry.frame.isEvent ? 'EVENT' : entry.frame.isData ? 'DATA' : 'FRAME'} '
+                        '${entry.frame.isAck
+                            ? 'ACK'
+                            : entry.frame.isNack
+                            ? 'NACK'
+                            : entry.frame.isEvent
+                            ? 'EVENT'
+                            : entry.frame.isData
+                            ? 'DATA'
+                            : 'FRAME'} '
                         'seq=${_formatHex(entry.frame.sequence, width: 2)} '
                         'cmd=${_formatHex(entry.frame.commandId, width: 2)}',
                       ),
                       subtitle: Text(_formatTime(entry.timestamp)),
                       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                       children: [
-                        _buildKeyValue('Product', _formatHex(entry.frame.productId, width: 4)),
-                        _buildKeyValue('Address', _formatHex(entry.frame.address, width: 8)),
-                        _buildKeyValue('OP', _formatHex(entry.frame.op, width: 2)),
-                        _buildKeyValue('Flags', _formatHex(entry.frame.flags, width: 2)),
-                        _buildKeyValue('Payload Length', '${entry.frame.payload.length}'),
-                        _buildKeyValue('CRC', _formatHex(entry.frame.crc, width: 4)),
+                        _buildKeyValue(
+                          'Product',
+                          _formatHex(entry.frame.productId, width: 4),
+                        ),
+                        _buildKeyValue(
+                          'Address',
+                          _formatHex(entry.frame.address, width: 8),
+                        ),
+                        _buildKeyValue(
+                          'OP',
+                          _formatHex(entry.frame.op, width: 2),
+                        ),
+                        _buildKeyValue(
+                          'Flags',
+                          _formatHex(entry.frame.flags, width: 2),
+                        ),
+                        _buildKeyValue(
+                          'Payload Length',
+                          '${entry.frame.payload.length}',
+                        ),
+                        _buildKeyValue(
+                          'CRC',
+                          _formatHex(entry.frame.crc, width: 4),
+                        ),
                         _buildKeyValue('Hex', entry.hex),
                       ],
                     ),
@@ -1125,10 +1201,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
       context,
       title: title,
       child: entries.isEmpty
-          ? Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(emptyText),
-            )
+          ? Padding(padding: const EdgeInsets.all(16), child: Text(emptyText))
           : Column(
               children: entries
                   .map(
@@ -1159,10 +1232,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
       context,
       title: title,
       child: entries.isEmpty
-          ? Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(emptyText),
-            )
+          ? Padding(padding: const EdgeInsets.all(16), child: Text(emptyText))
           : Column(
               children: entries
                   .map(
@@ -1241,10 +1311,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
             ),
           ),
           Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontFamily: 'monospace'),
-            ),
+            child: Text(value, style: const TextStyle(fontFamily: 'monospace')),
           ),
         ],
       ),
@@ -1273,7 +1340,9 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
   static int _parseDurationMs(String raw, String name) {
     final value = int.tryParse(raw.trim());
     if (value == null || value < 0) {
-      throw FormatException('$name must be a non-negative integer in milliseconds');
+      throw FormatException(
+        '$name must be a non-negative integer in milliseconds',
+      );
     }
     return value;
   }
@@ -1380,11 +1449,8 @@ class _HexEntry {
   final String label;
   final String hex;
 
-  _HexEntry({
-    required this.label,
-    required this.hex,
-    DateTime? timestamp,
-  }) : timestamp = timestamp ?? DateTime.now();
+  _HexEntry({required this.label, required this.hex, DateTime? timestamp})
+    : timestamp = timestamp ?? DateTime.now();
 }
 
 class _ParsedFrameEntry {
@@ -1432,9 +1498,6 @@ class _LogEntry {
   final String scope;
   final String message;
 
-  _LogEntry({
-    required this.scope,
-    required this.message,
-    DateTime? timestamp,
-  }) : timestamp = timestamp ?? DateTime.now();
+  _LogEntry({required this.scope, required this.message, DateTime? timestamp})
+    : timestamp = timestamp ?? DateTime.now();
 }
