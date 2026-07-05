@@ -85,6 +85,8 @@ class BleManager(
     private var lastConnectionIssue: ConnectionIssue? = null
     private var isScanning = false
     private var connectionReady = false
+    private var connectionRetryCount = 0
+    private val maxConnectionRetries = 2
 
     init {
         scanEventChannel.setStreamHandler(
@@ -217,13 +219,31 @@ class BleManager(
         }
 
         pendingConnectResult = result
+        connectionRetryCount = 0
+        connectInternal(deviceId)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun connectInternal(deviceId: String) {
+        val adapter = bluetoothAdapter() ?: return
+        val device = try {
+            adapter.getRemoteDevice(deviceId)
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+
+        if (device == null) {
+            handleConnectionFailure("device_not_found", "Bluetooth device not found")
+            return
+        }
+
         emitConnectionState("connecting", device.address)
         stopScanIfRunning()
         closeGatt()
         connectedDeviceId = device.address
         connectionReady = false
         lastConnectionIssue = null
-        Log.d(TAG, "Connecting to BLE device=${device.address}")
+        Log.d(TAG, "Connecting to BLE device=${device.address} (attempt ${connectionRetryCount + 1})")
 
         bluetoothGatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
@@ -231,14 +251,29 @@ class BleManager(
             device.connectGatt(context, false, gattCallback)
         }
         if (bluetoothGatt == null) {
-            pendingConnectResult = null
             Log.e(TAG, "Failed to initiate BLE connection for device=${device.address}")
-            result.error(
+            handleConnectionFailure(
                 "connect_failed",
                 "Failed to initiate BLE connection",
                 mapOf("deviceId" to device.address)
             )
         }
+    }
+
+    private fun triggerConnectionRetry(logMessage: String): Boolean {
+        if (pendingConnectResult != null && connectionRetryCount < maxConnectionRetries) {
+            connectionRetryCount++
+            Log.w(TAG, "$logMessage. Retrying ($connectionRetryCount/$maxConnectionRetries) in 500ms...")
+            closeGatt()
+            mainHandler.postDelayed({
+                val deviceId = connectedDeviceId
+                if (deviceId != null && pendingConnectResult != null) {
+                    connectInternal(deviceId)
+                }
+            }, 500)
+            return true
+        }
+        return false
     }
 
     @SuppressLint("MissingPermission")
@@ -276,29 +311,93 @@ class BleManager(
 
     @SuppressLint("MissingPermission")
     fun write(data: ByteArray, result: MethodChannel.Result) {
+        Log.d(TAG, "========== BLE WRITE REQUEST ==========")
+        Log.d(TAG, "write() called")
+        Log.d(TAG, "data length=${data.size}")
+        Log.d(TAG, "data HEX=${data.toHexString()}")
+
         if (!ensureBluetoothAvailable(result) || !ensurePermissions(result) || !ensureBluetoothEnabled(result)) {
+            Log.e(TAG, "write() blocked: bluetooth/permission/enabled check failed")
+            Log.d(TAG, "=======================================")
             return
         }
 
         val gatt = bluetoothGatt
         val characteristic = writeCharacteristic
-        if (gatt == null || characteristic == null || !connectionReady) {
-            result.error("characteristic_not_found", "No writable BLE characteristic is available", null)
+
+        Log.d(TAG, "bluetoothGatt exists=${gatt != null}")
+        Log.d(TAG, "writeCharacteristic exists=${characteristic != null}")
+        Log.d(TAG, "connectionReady=$connectionReady")
+        Log.d(TAG, "connectedDeviceId=$connectedDeviceId")
+        Log.d(TAG, "pendingWriteResult exists=${pendingWriteResult != null}")
+
+        if (gatt == null) {
+            Log.e(TAG, "write() failed: bluetoothGatt is null")
+            Log.d(TAG, "=======================================")
+            result.error(
+                "not_connected",
+                "BLE device is not connected",
+                mapOf("deviceId" to connectedDeviceId)
+            )
             return
         }
 
+        if (!connectionReady) {
+            Log.e(TAG, "write() failed: connectionReady=false")
+            Log.d(TAG, "=======================================")
+            result.error(
+                "connection_not_ready",
+                "BLE connection is not ready. Services or notifications are not configured yet.",
+                mapOf("deviceId" to connectedDeviceId)
+            )
+            return
+        }
+
+        if (characteristic == null) {
+            Log.e(TAG, "write() failed: writeCharacteristic is null")
+            Log.d(TAG, "=======================================")
+            result.error(
+                "characteristic_not_found",
+                "No writable BLE characteristic is available",
+                mapOf("deviceId" to connectedDeviceId)
+            )
+            return
+        }
+
+        Log.d(TAG, "writeCharacteristic uuid=${characteristic.uuid}")
+        Log.d(TAG, "writeCharacteristic properties=${characteristic.properties}")
+        Log.d(TAG, "supports PROPERTY_WRITE=${characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0}")
+        Log.d(TAG, "supports PROPERTY_WRITE_NO_RESPONSE=${characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0}")
+
         if (pendingWriteResult != null) {
-            result.error("operation_in_progress", "Another write is already in progress", null)
+            Log.e(TAG, "write() failed: another write already in progress")
+            Log.d(TAG, "=======================================")
+            result.error(
+                "operation_in_progress",
+                "Another write is already in progress",
+                mapOf("deviceId" to connectedDeviceId)
+            )
             return
         }
 
         val supportsWrite =
             characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE != 0
+
         val supportsWriteNoResponse =
             characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0
 
         if (!supportsWrite && !supportsWriteNoResponse) {
-            result.error("characteristic_not_found", "Characteristic does not support write", null)
+            Log.e(TAG, "write() failed: characteristic does not support write")
+            Log.d(TAG, "=======================================")
+            result.error(
+                "characteristic_not_writable",
+                "Characteristic does not support write",
+                mapOf(
+                    "deviceId" to connectedDeviceId,
+                    "characteristicUuid" to characteristic.uuid.toString(),
+                    "properties" to characteristic.properties
+                )
+            )
             return
         }
 
@@ -308,43 +407,113 @@ class BleManager(
             BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
         }
 
+        Log.d(
+            TAG,
+            "selected writeType=${
+                if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) {
+                    "WRITE_TYPE_DEFAULT"
+                } else {
+                    "WRITE_TYPE_NO_RESPONSE"
+                }
+            }"
+        )
+
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                Log.d(TAG, "Using Android 13+ writeCharacteristic API")
+
                 val status = gatt.writeCharacteristic(characteristic, data, writeType)
+
+                Log.d(TAG, "writeCharacteristic start status=$status (${describeGattStatus(status)})")
+
                 if (status != BluetoothGatt.GATT_SUCCESS) {
                     Log.e(TAG, "BLE write failed to start (status=$status ${describeGattStatus(status)})")
-                    result.error("gatt_error", "BLE write failed to start (status=$status)", null)
+                    Log.d(TAG, "=======================================")
+                    result.error(
+                        "gatt_error",
+                        "BLE write failed to start (status=$status ${describeGattStatus(status)})",
+                        mapOf(
+                            "deviceId" to connectedDeviceId,
+                            "status" to status,
+                            "statusName" to describeGattStatus(status)
+                        )
+                    )
                     return
                 }
+
                 if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) {
+                    Log.d(TAG, "WRITE_TYPE_NO_RESPONSE: completing result immediately")
+                    Log.d(TAG, "=======================================")
                     result.success(null)
                 } else {
+                    Log.d(TAG, "WRITE_TYPE_DEFAULT: waiting for onCharacteristicWrite callback")
                     pendingWriteResult = result
+                    Log.d(TAG, "pendingWriteResult set")
+                    Log.d(TAG, "=======================================")
                 }
             } else {
+                Log.d(TAG, "Using legacy writeCharacteristic API")
+
                 @Suppress("DEPRECATION")
                 characteristic.writeType = writeType
+
                 @Suppress("DEPRECATION")
                 characteristic.value = data
+
+                Log.d(TAG, "Starting legacy gatt.writeCharacteristic()")
+
                 @Suppress("DEPRECATION")
                 val started = gatt.writeCharacteristic(characteristic)
+
+                Log.d(TAG, "legacy writeCharacteristic started=$started")
+
                 if (!started) {
                     Log.e(TAG, "BLE write failed to start")
-                    result.error("write_failed", "BLE write failed to start", null)
+                    Log.d(TAG, "=======================================")
+                    result.error(
+                        "write_failed",
+                        "BLE write failed to start",
+                        mapOf("deviceId" to connectedDeviceId)
+                    )
                     return
                 }
+
                 if (writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) {
+                    Log.d(TAG, "WRITE_TYPE_NO_RESPONSE: completing result immediately")
+                    Log.d(TAG, "=======================================")
                     result.success(null)
                 } else {
+                    Log.d(TAG, "WRITE_TYPE_DEFAULT: waiting for onCharacteristicWrite callback")
                     pendingWriteResult = result
+                    Log.d(TAG, "pendingWriteResult set")
+                    Log.d(TAG, "=======================================")
                 }
             }
         } catch (securityException: SecurityException) {
             Log.e(TAG, "Bluetooth write permission denied", securityException)
-            result.error("permission_denied", "Bluetooth connect permission denied", null)
+            Log.d(TAG, "=======================================")
+            result.error(
+                "permission_denied",
+                "Bluetooth connect permission denied",
+                mapOf("deviceId" to connectedDeviceId)
+            )
         } catch (exception: Exception) {
             Log.e(TAG, "BLE write failed", exception)
-            result.error("unknown_error", "BLE write failed", null)
+            Log.d(TAG, "=======================================")
+            result.error(
+                "unknown_error",
+                "BLE write failed",
+                mapOf(
+                    "deviceId" to connectedDeviceId,
+                    "error" to exception.message
+                )
+            )
+        }
+    }
+
+    private fun ByteArray.toHexString(): String {
+        return joinToString(" ") { byte ->
+            "%02X".format(byte)
         }
     }
 
@@ -707,6 +876,11 @@ class BleManager(
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 val wasReady = connectionReady
                 val unexpected = pendingDisconnectResult == null && pendingConnectResult == null
+                
+                if (triggerConnectionRetry("GATT connection failed with status=$status (${describeGattStatus(status)})")) {
+                    return
+                }
+
                 handleConnectionFailure(
                     "gatt_error",
                     "GATT connection state error (status=$status ${describeGattStatus(status)})",
@@ -736,8 +910,12 @@ class BleManager(
 
             when (newState) {
                 BluetoothGatt.STATE_CONNECTED -> {
+                    connectionRetryCount = 0
                     try {
-                        if (status != BluetoothGatt.GATT_SUCCESS || !gatt.discoverServices()) {
+                        if (!gatt.discoverServices()) {
+                            if (triggerConnectionRetry("Failed to start service discovery")) {
+                                return
+                            }
                             handleConnectionFailure(
                                 "gatt_error",
                                 "Failed to discover services",
@@ -751,10 +929,16 @@ class BleManager(
                         }
                     } catch (securityException: SecurityException) {
                         Log.e(TAG, "Bluetooth connect permission denied during service discovery", securityException)
+                        if (triggerConnectionRetry("Bluetooth connect permission denied during service discovery")) {
+                            return
+                        }
                         handleConnectionFailure("permission_denied", "Bluetooth connect permission denied")
                         gatt.disconnect()
                     } catch (exception: Exception) {
                         Log.e(TAG, "BLE service discovery failed", exception)
+                        if (triggerConnectionRetry("BLE service discovery failed")) {
+                            return
+                        }
                         handleConnectionFailure("unknown_error", "BLE service discovery failed")
                         gatt.disconnect()
                     }
@@ -774,6 +958,9 @@ class BleManager(
                 "onServicesDiscovered device=${gatt.device?.address} status=$status (${describeGattStatus(status)})"
             )
             if (status != BluetoothGatt.GATT_SUCCESS) {
+                if (triggerConnectionRetry("Service discovery failed with status=$status (${describeGattStatus(status)})")) {
+                    return
+                }
                 handleConnectionFailure(
                     "gatt_error",
                     "BLE service discovery failed (status=$status ${describeGattStatus(status)})",
@@ -799,6 +986,9 @@ class BleManager(
             }
 
             if (status != BluetoothGatt.GATT_SUCCESS) {
+                if (triggerConnectionRetry("Descriptor write failed with status=$status (${describeGattStatus(status)})")) {
+                    return
+                }
                 handleConnectionFailure(
                     "notification_enable_failed",
                     "Failed to enable notifications (status=$status ${describeGattStatus(status)})",
@@ -814,9 +1004,27 @@ class BleManager(
 
             connectionReady = true
             Log.d(TAG, "BLE connection ready device=$connectedDeviceId")
+
+            try {
+                Log.d(TAG, "Requesting MTU of 512")
+                gatt.requestMtu(512)
+            } catch (e: SecurityException) {
+                Log.w(TAG, "Permission denied while requesting MTU", e)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to request MTU", e)
+            }
+
             emitConnectionState("connected", connectedDeviceId)
             pendingConnectResult?.success(null)
             pendingConnectResult = null
+        }
+
+        override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            Log.d(
+                TAG,
+                "onMtuChanged device=${gatt.device?.address} mtu=$mtu status=$status " +
+                    "(${describeGattStatus(status)})"
+            )
         }
 
         @Deprecated("Deprecated in Java")

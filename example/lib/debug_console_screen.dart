@@ -1359,6 +1359,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
     return tokens.map((token) {
       final normalized = token.replaceAll('0x', '').replaceAll('0X', '');
       final value = int.tryParse(normalized, radix: 16);
+      debugPrint('Parsing token: $token -> $value');
       if (value == null || value < 0 || value > 255) {
         throw FormatException('Invalid payload byte: $token');
       }
