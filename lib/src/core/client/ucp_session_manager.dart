@@ -238,9 +238,27 @@ class UcpSessionManager {
         _bootstrapCompleter = null;
         break;
       default:
-        _updateState(state);
+        if (_shouldApplyTransportState(state)) {
+          _updateState(state);
+        }
         break;
     }
+  }
+
+  bool _shouldApplyTransportState(DeviceConnectionState nextState) {
+    if (_state == nextState) {
+      return true;
+    }
+
+    // Native BLE callbacks can report lower-level readiness states like
+    // `mtuReady` after the UCP bootstrap has already advanced to
+    // `transportReady` or `sessionActive`. Ignore those regressions.
+    if (_state.index >= DeviceConnectionState.transportReady.index &&
+        nextState.index < DeviceConnectionState.transportReady.index) {
+      return false;
+    }
+
+    return true;
   }
 
   Future<void> _startBootstrapIfNeeded() {

@@ -36,25 +36,32 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
   bool? _bluetoothAvailable;
   bool? _bluetoothEnabled;
   bool? _permissionsGranted;
-  bool _busy = false;
+  int _pendingActions = 0;
 
   DiscoveredDevice? get _selectedDevice =>
       _selectedDeviceId == null ? null : _devices[_selectedDeviceId];
 
   bool get _canConnect =>
       _selectedDevice != null &&
-      _connectionState == DeviceConnectionState.disconnected;
+      (_connectionState == DeviceConnectionState.disconnected ||
+          _connectionState == DeviceConnectionState.connectionLost);
 
   bool get _canDisconnect =>
-      _connectionState != DeviceConnectionState.disconnected;
+      _connectionState != DeviceConnectionState.disconnected &&
+      _connectionState != DeviceConnectionState.connectionLost;
 
-  bool get _sessionReady =>
-      _connectionState == DeviceConnectionState.sessionActive ||
-      _connectionState == DeviceConnectionState.measurementActive ||
-      _connectionState == DeviceConnectionState.streamActive;
+  bool get _sessionReady => _client.isSessionActive;
 
-  bool get _streamActive =>
-      _connectionState == DeviceConnectionState.streamActive;
+  bool get _streamActive => _client.currentSession?.streamActive ?? false;
+
+  bool get _canRetryBootstrap =>
+      _canDisconnect &&
+      !_sessionReady &&
+      _connectionState != DeviceConnectionState.scanning &&
+      _connectionState != DeviceConnectionState.connecting &&
+      _connectionState != DeviceConnectionState.disconnecting;
+
+  bool get _busy => _pendingActions > 0;
 
   @override
   void initState() {
@@ -138,7 +145,15 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
   }
 
   Future<void> _disconnect() async {
-    await _runAction('Disconnect', _client.disconnect);
+    await _runAction('Disconnect', _client.disconnect, allowWhileBusy: true);
+  }
+
+  Future<void> _retryBootstrap() async {
+    await _runAction('bootstrap', () async {
+      await _client.sessionManager.bootstrap();
+      await _client.sessionManager.waitUntilSessionActive();
+      _appendLog('session bootstrap completed');
+    });
   }
 
   Future<void> _readDeviceInfo() async {
@@ -243,12 +258,16 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
     });
   }
 
-  Future<void> _runAction(String label, Future<void> Function() action) async {
-    if (_busy) {
+  Future<void> _runAction(
+    String label,
+    Future<void> Function() action, {
+    bool allowWhileBusy = false,
+  }) async {
+    if (_busy && !allowWhileBusy) {
       return;
     }
     setState(() {
-      _busy = true;
+      _pendingActions++;
     });
     try {
       await action();
@@ -263,7 +282,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
     } finally {
       if (mounted) {
         setState(() {
-          _busy = false;
+          _pendingActions--;
         });
       }
     }
@@ -435,6 +454,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
             ),
             const SizedBox(height: 12),
             Text('State: ${_connectionState.name}'),
+            Text('Session active: ${_sessionReady ? 'yes' : 'no'}'),
             Text('Platform: ${_platformVersion ?? '-'}'),
             Text('Bluetooth available: ${_bluetoothAvailable ?? '-'}'),
             Text('Bluetooth enabled: ${_bluetoothEnabled ?? '-'}'),
@@ -451,6 +471,12 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
                 OutlinedButton(
                   onPressed: _busy ? null : _requestPermissions,
                   child: const Text('Request Permissions'),
+                ),
+                OutlinedButton(
+                  onPressed: _busy || !_canRetryBootstrap
+                      ? null
+                      : _retryBootstrap,
+                  child: const Text('Retry Bootstrap'),
                 ),
               ],
             ),
@@ -485,7 +511,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
                   child: const Text('Connect'),
                 ),
                 OutlinedButton(
-                  onPressed: _busy || !_canDisconnect ? null : _disconnect,
+                  onPressed: !_canDisconnect ? null : _disconnect,
                   child: const Text('Disconnect'),
                 ),
               ],
@@ -528,7 +554,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
             Text(
               _sessionReady
                   ? 'Normal commands enabled after session bootstrap'
-                  : 'Normal commands are blocked until sessionActive',
+                  : 'Waiting for session bootstrap. If this stays on connected, notifySubscribed, or mtuReady, use Retry Bootstrap or Disconnect.',
             ),
             const SizedBox(height: 12),
             Wrap(

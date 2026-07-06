@@ -118,6 +118,26 @@ void main() {
       );
     });
 
+    test('ignores late mtuReady updates after session bootstrap completes', () async {
+      final states = <DeviceConnectionState>[];
+      final subscription = client.connectionState.listen(states.add);
+      addTearDown(subscription.cancel);
+
+      await _completeBootstrapForClient(
+        client: client,
+        transport: transport,
+        frameBuilder: frameBuilder,
+        frameParser: frameParser,
+      );
+
+      transport.simulateConnectionState(DeviceConnectionState.mtuReady);
+      await _drainQueue();
+
+      expect(client.isSessionActive, isTrue);
+      expect(client.currentSession?.state, DeviceConnectionState.sessionActive);
+      expect(states.last, DeviceConnectionState.sessionActive);
+    });
+
     test('blocks normal commands before sessionActive', () async {
       final connectFuture = client.connect(
         DiscoveredDevice(
