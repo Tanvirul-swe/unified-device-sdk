@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'device_response.dart';
 import '../../protocol/commands/command_options.dart';
+import '../../protocol/constants/command_classes.dart';
+import '../../protocol/constants/profile_ids.dart';
+import '../../protocol/constants/ucp_addresses.dart';
 
 /// Tracks a command request that is awaiting a response.
 class PendingRequest {
@@ -11,14 +14,17 @@ class PendingRequest {
   /// Product identifier of the original command.
   final int productId;
 
-  /// Device address of the original command.
-  final int address;
+  final int profileId;
+  final int sourceAddress;
+  final int destinationAddress;
 
   /// Command identifier of the original command.
   final int commandId;
 
   /// Operation code of the original command.
   final int op;
+
+  final int commandClass;
 
   /// Flags sent with the original command.
   final int flags;
@@ -47,17 +53,25 @@ class PendingRequest {
   PendingRequest({
     required this.sequence,
     required this.productId,
-    required this.address,
+    this.profileId = ProfileIds.defaultProfile,
+    this.sourceAddress = UcpAddresses.defaultSource,
+    int? address,
+    int? destinationAddress,
     required this.commandId,
     required this.op,
+    this.commandClass = CommandClasses.system,
     this.flags = 0,
     List<int> payload = const [],
     this.options = const CommandOptions(),
     Completer<DeviceResponse>? completer,
     DateTime? createdAt,
-  })  : payload = List<int>.unmodifiable(payload),
-        completer = completer ?? Completer<DeviceResponse>(),
-        createdAt = createdAt ?? DateTime.now();
+  }) : destinationAddress =
+           destinationAddress ?? address ?? UcpAddresses.defaultDestination,
+       payload = List<int>.unmodifiable(payload),
+       completer = completer ?? Completer<DeviceResponse>(),
+       createdAt = createdAt ?? DateTime.now();
+
+  int get address => destinationAddress;
 
   /// Legacy alias retained for older call sites.
   int get sequenceNumber => sequence;
@@ -105,6 +119,16 @@ class PendingRequest {
   /// Backward-compatible single timeout helper.
   void startTimeout(void Function(PendingRequest request) onTimeout) {
     startAckTimeout(onTimeout);
+  }
+
+  bool matches({
+    required int sequence,
+    required int commandClass,
+    required int commandId,
+  }) {
+    return this.sequence == sequence &&
+        this.commandClass == commandClass &&
+        this.commandId == commandId;
   }
 
   /// Cancels all active timers.

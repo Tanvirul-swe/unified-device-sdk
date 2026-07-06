@@ -36,8 +36,8 @@ class DiscoveredDevice {
     DateTime? firstDiscoveredAt,
     DateTime? lastSeenAt,
     this.advertisementCount = 1,
-  })  : firstDiscoveredAt = firstDiscoveredAt ?? DateTime.now(),
-        lastSeenAt = lastSeenAt ?? DateTime.now();
+  }) : firstDiscoveredAt = firstDiscoveredAt ?? DateTime.now(),
+       lastSeenAt = lastSeenAt ?? DateTime.now();
 
   /// Creates a copy with updated advertisement data.
   DiscoveredDevice copyWith({

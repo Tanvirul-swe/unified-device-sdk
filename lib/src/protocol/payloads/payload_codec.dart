@@ -14,10 +14,7 @@ class PayloadCodec {
         bytes.add(value & 0xFF);
       } else if (value >= -32768 && value <= 32767) {
         bytes.add(0x02); // Type: int16
-        bytes.addAll([
-          (value >> 8) & 0xFF,
-          value & 0xFF,
-        ]);
+        bytes.addAll([(value >> 8) & 0xFF, value & 0xFF]);
       } else {
         bytes.add(0x04); // Type: int32
         bytes.addAll([
@@ -35,11 +32,7 @@ class PayloadCodec {
   static List<int> encodeString(String value) {
     final encoded = _encodeUtf8(value);
     final length = encoded.length;
-    return [
-      length & 0xFF,
-      (length >> 8) & 0xFF,
-      ...encoded,
-    ];
+    return [length & 0xFF, (length >> 8) & 0xFF, ...encoded];
   }
 
   /// Encodes a boolean as a single byte.

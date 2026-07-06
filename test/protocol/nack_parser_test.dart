@@ -33,10 +33,7 @@ void main() {
         op: OperationCodes.ack,
       );
 
-      expect(
-        () => parser.parse(response),
-        throwsA(isA<ProtocolException>()),
-      );
+      expect(() => parser.parse(response), throwsA(isA<ProtocolException>()));
     });
   });
 }

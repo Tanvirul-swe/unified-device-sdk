@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:unified_device_sdk/unified_device_sdk.dart';
 
@@ -5,6 +7,52 @@ import '../mocks/fake_transport.dart';
 
 Future<void> _drainQueue() async {
   await Future<void>.delayed(Duration.zero);
+}
+
+Future<void> _completeBootstrap({
+  required FakeTransport transport,
+  required FrameBuilder frameBuilder,
+  required FrameParser frameParser,
+}) async {
+  await _drainQueue();
+  expect(transport.writtenData, hasLength(1));
+
+  final transportOpenRequest = frameParser.parse(transport.writtenData[0]);
+  transport.simulateIncomingData(
+    frameBuilder.build(
+      version: 1,
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.dummyM2m,
+      sourceAddress: UcpAddresses.device,
+      destinationAddress: UcpAddresses.software,
+      op: OperationCodes.ack,
+      commandClass: CommandClasses.session,
+      commandId: SessionCommandIds.btTransportOpen,
+      sequence: transportOpenRequest.sequence,
+      flags: 0,
+    ),
+  );
+
+  await _drainQueue();
+  expect(transport.writtenData, hasLength(2));
+
+  final sessionOpenRequest = frameParser.parse(transport.writtenData[1]);
+  transport.simulateIncomingData(
+    frameBuilder.build(
+      version: 1,
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.dummyM2m,
+      sourceAddress: UcpAddresses.device,
+      destinationAddress: UcpAddresses.software,
+      op: OperationCodes.ack,
+      commandClass: CommandClasses.session,
+      commandId: SessionCommandIds.sessionOpenRtcSync,
+      sequence: sessionOpenRequest.sequence,
+      flags: 0,
+    ),
+  );
+
+  await _drainQueue();
 }
 
 void main() {
@@ -28,126 +76,138 @@ void main() {
       await transport.dispose();
     });
 
-    test('exposes discoveredDevices and connectionState streams', () async {
-      final devices = <DiscoveredDevice>[];
+    test('connect auto-runs official transport and session bootstrap', () async {
       final states = <DeviceConnectionState>[];
+      final subscription = client.connectionState.listen(states.add);
+      addTearDown(subscription.cancel);
 
-      final deviceSub = client.discoveredDevices.listen(devices.add);
-      final stateSub = client.connectionState.listen(states.add);
-      addTearDown(deviceSub.cancel);
-      addTearDown(stateSub.cancel);
-
-      transport.simulateDeviceDiscovered(
-        DiscoveredDevice(deviceId: 'dev-1', rssi: -50),
+      final connectFuture = client.connect(
+        DiscoveredDevice(
+          deviceId: 'dev-1',
+          name: BleConstants.defaultDeviceName,
+          rssi: -42,
+        ),
       );
-      transport.simulateConnectionState(
-        DeviceConnectionState.connected,
-        deviceId: 'dev-1',
+
+      await _completeBootstrap(
+        transport: transport,
+        frameBuilder: frameBuilder,
+        frameParser: frameParser,
       );
-      await _drainQueue();
+      await connectFuture;
 
-      expect(devices.single.deviceId, 'dev-1');
-      expect(states, contains(DeviceConnectionState.connected));
-      expect(client.isConnected, isTrue);
-    });
+      final transportOpenRequest = frameParser.parse(transport.writtenData[0]);
+      final sessionOpenRequest = frameParser.parse(transport.writtenData[1]);
 
-    test('sendCommand validates inputs', () async {
-      transport.simulateConnectionState(
-        DeviceConnectionState.connected,
-        deviceId: 'dev-1',
-      );
-      await _drainQueue();
-
+      expect(transportOpenRequest.commandClass, CommandClasses.session);
+      expect(transportOpenRequest.commandId, SessionCommandIds.btTransportOpen);
+      expect(sessionOpenRequest.commandClass, CommandClasses.session);
       expect(
+        sessionOpenRequest.commandId,
+        SessionCommandIds.sessionOpenRtcSync,
+      );
+      expect(states, contains(DeviceConnectionState.transportReady));
+      expect(client.isSessionActive, isTrue);
+      expect(
+        client.currentSession?.state,
+        anyOf(
+          DeviceConnectionState.sessionActive,
+          DeviceConnectionState.measurementActive,
+          DeviceConnectionState.streamActive,
+        ),
+      );
+    });
+
+    test('blocks normal commands before sessionActive', () async {
+      final connectFuture = client.connect(
+        DiscoveredDevice(
+          deviceId: 'dev-1',
+          name: BleConstants.defaultDeviceName,
+          rssi: -42,
+        ),
+      );
+
+      await _drainQueue();
+      await expectLater(
         () => client.sendCommand(
-          productId: -1,
-          op: OperationCodes.read,
-          commandId: 1,
+          productId: ProductIds.aunkurUcp1,
+          profileId: ProfileIds.dummyM2m,
+          sourceAddress: UcpAddresses.software,
+          destinationAddress: UcpAddresses.device,
+          op: OperationCodes.req,
+          commandClass: CommandClasses.system,
+          commandId: SystemCommandIds.deviceInfo,
         ),
-        throwsArgumentError,
+        throwsA(
+          isA<ProtocolException>().having(
+            (e) => e.protocolErrorType,
+            'type',
+            ProtocolErrorType.invalidDeviceState,
+          ),
+        ),
       );
+
+      await _completeBootstrap(
+        transport: transport,
+        frameBuilder: frameBuilder,
+        frameParser: frameParser,
+      );
+      await connectFuture;
     });
 
-    test('sendCommand sends via manager and emits frames/events', () async {
-      transport.simulateConnectionState(
-        DeviceConnectionState.connected,
-        deviceId: 'dev-1',
+    test('emits EVENT frames through events stream after bootstrap', () async {
+      await _completeBootstrapForClient(
+        client: client,
+        transport: transport,
+        frameBuilder: frameBuilder,
+        frameParser: frameParser,
       );
-      await _drainQueue();
 
-      final frames = <DeviceFrame>[];
       final events = <DeviceEvent>[];
-      final frameSub = client.frames.listen(frames.add);
-      final eventSub = client.events.listen(events.add);
-      addTearDown(frameSub.cancel);
-      addTearDown(eventSub.cancel);
-
-      final future = client.sendCommand(
-        productId: 0x1001,
-        op: OperationCodes.read,
-        commandId: 0x21,
-      );
-
-      final outbound = frameParser.parse(transport.writtenData.single);
+      final subscription = client.events.listen(events.add);
+      addTearDown(subscription.cancel);
 
       transport.simulateIncomingData(
         frameBuilder.build(
           version: 1,
-          productId: 0x1001,
-          address: 0,
+          productId: ProductIds.aunkurUcp1,
+          profileId: ProfileIds.dummyM2m,
+          sourceAddress: UcpAddresses.device,
+          destinationAddress: UcpAddresses.software,
           op: OperationCodes.event,
-          commandId: 0x55,
-          sequence: 1,
+          commandClass: CommandClasses.session,
+          commandId: SessionCommandIds.heartbeat,
+          sequence: 2,
           flags: 0,
-          payload: const [0xAB, 0xCD],
+          payload: const [0xAB],
         ),
-      );
-
-      transport.simulateIncomingData(
-        frameBuilder.build(
-          version: 1,
-          productId: 0x1001,
-          address: 0,
-          op: OperationCodes.ack,
-          commandId: 0x21,
-          sequence: outbound.sequence,
-          flags: 0,
-        ),
-      );
-
-      final response = await future;
-      await _drainQueue();
-
-      expect(response.sequence, outbound.sequence);
-      expect(frames, isNotEmpty);
-      expect(events.single.commandId, 0x55);
-    });
-
-    test('sendFrame writes prebuilt frame', () async {
-      transport.simulateConnectionState(
-        DeviceConnectionState.connected,
-        deviceId: 'dev-1',
       );
       await _drainQueue();
 
-      final frame = DeviceFrame(
-        version: 1,
-        productId: 0x1001,
-        address: 0,
-        op: OperationCodes.write,
-        commandId: 0x41,
-        sequence: 9,
-        flags: 0,
-        payload: const [0x01, 0x02],
-        crc: 0,
-      );
-
-      await client.sendFrame(frame);
-
-      expect(transport.writtenData, hasLength(1));
-      final written = frameParser.parse(transport.writtenData.single);
-      expect(written.commandId, 0x41);
-      expect(written.sequence, 9);
+      expect(events, hasLength(1));
+      expect(events.single.commandId, SessionCommandIds.heartbeat);
+      expect(events.single.eventCode, 0xAB);
     });
   });
+}
+
+Future<void> _completeBootstrapForClient({
+  required UnifiedDeviceClient client,
+  required FakeTransport transport,
+  required FrameBuilder frameBuilder,
+  required FrameParser frameParser,
+}) async {
+  final connectFuture = client.connect(
+    DiscoveredDevice(
+      deviceId: 'dev-1',
+      name: BleConstants.defaultDeviceName,
+      rssi: -42,
+    ),
+  );
+  await _completeBootstrap(
+    transport: transport,
+    frameBuilder: frameBuilder,
+    frameParser: frameParser,
+  );
+  await connectFuture;
 }

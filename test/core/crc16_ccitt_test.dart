@@ -81,7 +81,11 @@ void main() {
   group('Crc16Ccitt (configurable parameters)', () {
     test('custom initial value produces different result', () {
       final standard = Crc16Ccitt.standard();
-      final customInit = Crc16Ccitt(polynomial: 0x1021, initialValue: 0x0000, finalXor: 0x0000);
+      final customInit = Crc16Ccitt(
+        polynomial: 0x1021,
+        initialValue: 0x0000,
+        finalXor: 0x0000,
+      );
 
       final resultStandard = standard.compute([0x01, 0x02]);
       final resultCustom = customInit.compute([0x01, 0x02]);
@@ -89,8 +93,16 @@ void main() {
     });
 
     test('custom final XOR produces different result', () {
-      final noXor = Crc16Ccitt(polynomial: 0x1021, initialValue: 0xFFFF, finalXor: 0x0000);
-      final xorAll = Crc16Ccitt(polynomial: 0x1021, initialValue: 0xFFFF, finalXor: 0xFFFF);
+      final noXor = Crc16Ccitt(
+        polynomial: 0x1021,
+        initialValue: 0xFFFF,
+        finalXor: 0x0000,
+      );
+      final xorAll = Crc16Ccitt(
+        polynomial: 0x1021,
+        initialValue: 0xFFFF,
+        finalXor: 0xFFFF,
+      );
 
       final resultNoXor = noXor.compute([0x01, 0x02]);
       final resultXorAll = xorAll.compute([0x01, 0x02]);
@@ -105,27 +117,21 @@ void main() {
       expect(result, 0x0000);
     });
 
-    test('CRC-16-CCITT-FALSE (init=0x0000)', () {
+    test('CRC-16-CCITT-FALSE matches the official UCP parameters', () {
       final falseCrc = Crc16Ccitt.false_();
       final standard = Crc16Ccitt.standard();
       final resultFalse = falseCrc.compute(_checkVector);
       final resultStd = standard.compute(_checkVector);
-      // Different init values produce different results
-      expect(resultFalse, isNot(resultStd));
+      expect(resultFalse, 0x29B1);
+      expect(resultFalse, resultStd);
     });
 
     test('construction with invalid polynomial throws', () {
-      expect(
-        () => Crc16Ccitt(polynomial: -1),
-        throwsArgumentError,
-      );
+      expect(() => Crc16Ccitt(polynomial: -1), throwsArgumentError);
     });
 
     test('construction with value > uint16 throws', () {
-      expect(
-        () => Crc16Ccitt(initialValue: 0x10000),
-        throwsArgumentError,
-      );
+      expect(() => Crc16Ccitt(initialValue: 0x10000), throwsArgumentError);
     });
   });
 
@@ -154,10 +160,7 @@ void main() {
     test('appendDefault matches instance', () {
       final data = [0x01, 0x02, 0x03];
       final instance = Crc16Ccitt.standard();
-      expect(
-        Crc16Ccitt.appendDefault(data),
-        instance.append(data),
-      );
+      expect(Crc16Ccitt.appendDefault(data), instance.append(data));
     });
   });
 }

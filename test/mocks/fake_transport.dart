@@ -102,9 +102,14 @@ class FakeTransport implements DeviceTransport {
   }
 
   /// Simulates a transport connection state update.
-  void simulateConnectionState(DeviceConnectionState state, {String? deviceId}) {
+  void simulateConnectionState(
+    DeviceConnectionState state, {
+    String? deviceId,
+  }) {
     _connectionState = state;
-    _connectedDeviceId = state == DeviceConnectionState.connected ? deviceId : null;
+    _connectedDeviceId = state == DeviceConnectionState.connected
+        ? deviceId
+        : null;
     _connectionStateController.add(state);
   }
 }

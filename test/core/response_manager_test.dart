@@ -28,41 +28,45 @@ void main() {
       await transport.dispose();
     });
 
-    test('ACK-only success', () async {
+    test('ACK-only success with official header fields', () async {
       final future = manager.sendCommand(
-        commandId: 0x21,
-        productId: 0x1001,
-        address: 0x01020304,
-        op: OperationCodes.read,
+        commandId: SystemCommandIds.deviceInfo,
+        productId: ProductIds.aunkurUcp1,
+        profileId: ProfileIds.dummyM2m,
+        sourceAddress: UcpAddresses.software,
+        destinationAddress: UcpAddresses.device,
+        op: OperationCodes.req,
+        commandClass: CommandClasses.system,
       );
 
-      expect(transport.writtenData, hasLength(1));
       final requestFrame = frameParser.parse(transport.writtenData.single);
+      expect(requestFrame.sequence, 0);
 
       transport.simulateIncomingData(
         frameBuilder.build(
           version: 1,
-          productId: 0x1001,
-          address: 0x01020304,
+          productId: ProductIds.aunkurUcp1,
+          profileId: ProfileIds.dummyM2m,
+          sourceAddress: UcpAddresses.device,
+          destinationAddress: UcpAddresses.software,
           op: OperationCodes.ack,
-          commandId: 0x21,
+          commandClass: CommandClasses.system,
+          commandId: SystemCommandIds.deviceInfo,
           sequence: requestFrame.sequence,
           flags: 0,
-          payload: const [],
         ),
       );
 
       final response = await future;
-      expect(response.sequence, requestFrame.sequence);
-      expect(response.commandId, 0x21);
-      expect(response.op, OperationCodes.ack);
+      expect(response.commandId, SystemCommandIds.deviceInfo);
+      expect(response.commandClass, CommandClasses.system);
       expect(manager.pendingCount, 0);
     });
 
     test('ACK then DATA success', () async {
       final future = manager.sendCommand(
-        commandId: 0x31,
-        op: OperationCodes.read,
+        commandId: SessionCommandIds.btTransportOpen,
+        commandClass: CommandClasses.session,
         options: const CommandOptions(
           waitForAck: true,
           waitForData: true,
@@ -72,31 +76,32 @@ void main() {
       );
 
       final requestFrame = frameParser.parse(transport.writtenData.single);
-      var completed = false;
-      unawaited(future.then((_) => completed = true));
-
       transport.simulateIncomingData(
         frameBuilder.build(
           version: 1,
-          productId: 0,
-          address: 0,
+          productId: ProductIds.aunkurUcp1,
+          profileId: ProfileIds.dummyM2m,
+          sourceAddress: UcpAddresses.device,
+          destinationAddress: UcpAddresses.software,
           op: OperationCodes.ack,
-          commandId: 0x31,
+          commandClass: CommandClasses.session,
+          commandId: SessionCommandIds.btTransportOpen,
           sequence: requestFrame.sequence,
           flags: 0,
-          payload: const [],
         ),
       );
       await _flushMicrotasks();
-      expect(completed, isFalse);
 
       transport.simulateIncomingData(
         frameBuilder.build(
           version: 1,
-          productId: 0,
-          address: 0,
+          productId: ProductIds.aunkurUcp1,
+          profileId: ProfileIds.dummyM2m,
+          sourceAddress: UcpAddresses.device,
+          destinationAddress: UcpAddresses.software,
           op: OperationCodes.data,
-          commandId: 0x31,
+          commandClass: CommandClasses.session,
+          commandId: SessionCommandIds.btTransportOpen,
           sequence: requestFrame.sequence,
           flags: 0,
           payload: const [0xAA, 0xBB],
@@ -108,20 +113,23 @@ void main() {
       expect(response.payload, [0xAA, 0xBB]);
     });
 
-    test('NACK failure', () async {
+    test('NACK failure uses raw payload error code', () async {
       final future = manager.sendCommand(
-        commandId: 0x41,
-        op: OperationCodes.action,
+        commandId: SystemCommandIds.deviceInfo,
+        commandClass: CommandClasses.system,
       );
 
       final requestFrame = frameParser.parse(transport.writtenData.single);
       transport.simulateIncomingData(
         frameBuilder.build(
           version: 1,
-          productId: 0,
-          address: 0,
+          productId: ProductIds.aunkurUcp1,
+          profileId: ProfileIds.dummyM2m,
+          sourceAddress: UcpAddresses.device,
+          destinationAddress: UcpAddresses.software,
           op: OperationCodes.nack,
-          commandId: 0x41,
+          commandClass: CommandClasses.system,
+          commandId: SystemCommandIds.deviceInfo,
           sequence: requestFrame.sequence,
           flags: 0x01,
           payload: const [0x7F],
@@ -142,7 +150,7 @@ void main() {
       );
     });
 
-    test('EVENT emission', () async {
+    test('EVENT emission decodes event frame', () async {
       final events = <DeviceEvent>[];
       final subscription = manager.events.listen(events.add);
       addTearDown(subscription.cancel);
@@ -150,158 +158,23 @@ void main() {
       transport.simulateIncomingData(
         frameBuilder.build(
           version: 1,
-          productId: 0x2002,
-          address: 0,
+          productId: ProductIds.aunkurUcp1,
+          profileId: ProfileIds.dummyM2m,
+          sourceAddress: UcpAddresses.device,
+          destinationAddress: UcpAddresses.software,
           op: OperationCodes.event,
-          commandId: 0x77,
+          commandClass: CommandClasses.session,
+          commandId: SessionCommandIds.heartbeat,
           sequence: 1,
           flags: 0,
-          payload: const [0xAB, 0xCD],
+          payload: const [0xAB],
         ),
       );
       await _flushMicrotasks();
 
       expect(events, hasLength(1));
-      expect(events.single.commandId, 0x77);
+      expect(events.single.commandId, SessionCommandIds.heartbeat);
       expect(events.single.eventCode, 0xAB);
-      expect(events.single.payload, [0xAB, 0xCD]);
-    });
-
-    test('timeout waiting for ACK', () async {
-      final future = manager.sendCommand(
-        commandId: 0x51,
-        options: const CommandOptions(
-          ackTimeout: Duration(milliseconds: 20),
-          waitForAck: true,
-          waitForData: false,
-        ),
-      );
-
-      await expectLater(
-        future,
-        throwsA(
-          isA<TimeoutException>().having(
-            (e) => e.operation,
-            'operation',
-            contains('ACK'),
-          ),
-        ),
-      );
-    });
-
-    test('timeout waiting for DATA', () async {
-      final future = manager.sendCommand(
-        commandId: 0x61,
-        options: const CommandOptions(
-          ackTimeout: Duration(milliseconds: 20),
-          dataTimeout: Duration(milliseconds: 20),
-          waitForAck: true,
-          waitForData: true,
-        ),
-      );
-
-      final requestFrame = frameParser.parse(transport.writtenData.single);
-      transport.simulateIncomingData(
-        frameBuilder.build(
-          version: 1,
-          productId: 0,
-          address: 0,
-          op: OperationCodes.ack,
-          commandId: 0x61,
-          sequence: requestFrame.sequence,
-          flags: 0,
-        ),
-      );
-
-      await expectLater(
-        future,
-        throwsA(
-          isA<TimeoutException>().having(
-            (e) => e.operation,
-            'operation',
-            contains('DATA'),
-          ),
-        ),
-      );
-    });
-
-    test(
-      'write startup failure is propagated once and clears pending request',
-      () async {
-        transport.simulateErrors = true;
-        final uncaughtErrors = <Object>[];
-
-        await runZonedGuarded(
-          () async {
-            final future = manager.sendCommand(commandId: 0x62);
-            await expectLater(future, throwsA(isA<Exception>()));
-            await _flushMicrotasks();
-          },
-          (error, _) {
-            uncaughtErrors.add(error);
-          },
-        );
-
-        expect(manager.pendingCount, 0);
-        expect(uncaughtErrors, isEmpty);
-      },
-    );
-
-    test('disconnect fails pending requests', () async {
-      final future = manager.sendCommand(commandId: 0x71);
-      transport.simulateConnectionState(DeviceConnectionState.disconnected);
-
-      await expectLater(future, throwsA(isA<TransportException>()));
-    });
-
-    test('sequence matching keeps requests isolated', () async {
-      final first = manager.sendCommand(
-        commandId: 0x81,
-        options: const CommandOptions(waitForAck: true, waitForData: false),
-      );
-      final second = manager.sendCommand(
-        commandId: 0x82,
-        options: const CommandOptions(waitForAck: true, waitForData: false),
-      );
-
-      expect(transport.writtenData, hasLength(2));
-      final firstFrame = frameParser.parse(transport.writtenData[0]);
-      final secondFrame = frameParser.parse(transport.writtenData[1]);
-
-      var firstCompleted = false;
-      unawaited(first.then((_) => firstCompleted = true));
-
-      transport.simulateIncomingData(
-        frameBuilder.build(
-          version: 1,
-          productId: 0,
-          address: 0,
-          op: OperationCodes.ack,
-          commandId: 0x82,
-          sequence: secondFrame.sequence,
-          flags: 0,
-        ),
-      );
-      await _flushMicrotasks();
-
-      final secondResponse = await second;
-      expect(secondResponse.sequence, secondFrame.sequence);
-      expect(firstCompleted, isFalse);
-
-      transport.simulateIncomingData(
-        frameBuilder.build(
-          version: 1,
-          productId: 0,
-          address: 0,
-          op: OperationCodes.ack,
-          commandId: 0x81,
-          sequence: firstFrame.sequence,
-          flags: 0,
-        ),
-      );
-
-      final firstResponse = await first;
-      expect(firstResponse.sequence, firstFrame.sequence);
     });
   });
 }

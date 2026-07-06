@@ -87,6 +87,16 @@ class ByteReader {
     return value;
   }
 
+  /// Reads a 64-bit unsigned integer in big-endian order.
+  ///
+  /// Throws [ByteReaderException] if fewer than 8 bytes are available.
+  int readUint64BE() {
+    _assertAvailable(8);
+    final value = EndianUtils.bytesToUint64BE(_buffer, _offset);
+    _offset += 8;
+    return value;
+  }
+
   /// Reads exactly [count] bytes and returns them as a list.
   ///
   /// Throws [ByteReaderException] if fewer than [count] bytes are available.
@@ -113,7 +123,8 @@ class ByteReader {
   void _assertAvailable(int count) {
     if (remaining < count) {
       throw ByteReaderException(
-        message: 'Insufficient bytes: need $count but only $remaining remaining',
+        message:
+            'Insufficient bytes: need $count but only $remaining remaining',
         requested: count,
         available: remaining,
       );

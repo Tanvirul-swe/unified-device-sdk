@@ -50,7 +50,9 @@ abstract class UnifiedDevicePlatform extends PlatformInterface {
 
   /// Returns whether Bluetooth is available on this device.
   Future<bool> isBluetoothAvailable() {
-    throw UnimplementedError('isBluetoothAvailable() has not been implemented.');
+    throw UnimplementedError(
+      'isBluetoothAvailable() has not been implemented.',
+    );
   }
 
   /// Returns whether Bluetooth is currently enabled.

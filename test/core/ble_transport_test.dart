@@ -88,9 +88,7 @@ class FakeUnifiedDevicePlatform extends UnifiedDevicePlatform {
   }
 
   void emitNotification(List<int> data) {
-    _notificationDataController.add({
-      'data': base64Encode(data),
-    });
+    _notificationDataController.add({'data': base64Encode(data)});
   }
 
   void emitScanError(Object error) {
@@ -262,17 +260,20 @@ void main() {
       expect(errors.single, isA<StateError>());
     });
 
-    test('dispose releases platform resources and resets local state', () async {
-      await transport.startScan();
-      platform.emitConnectionState('connected', deviceId: 'dev-4');
-      await _drainEventQueue();
+    test(
+      'dispose releases platform resources and resets local state',
+      () async {
+        await transport.startScan();
+        platform.emitConnectionState('connected', deviceId: 'dev-4');
+        await _drainEventQueue();
 
-      await transport.dispose();
+        await transport.dispose();
 
-      expect(platform.disposeCalled, isTrue);
-      expect(transport.isScanning, isFalse);
-      expect(transport.isConnected, isFalse);
-      expect(transport.connectedDeviceId, isNull);
-    });
+        expect(platform.disposeCalled, isTrue);
+        expect(transport.isScanning, isFalse);
+        expect(transport.isConnected, isFalse);
+        expect(transport.connectedDeviceId, isNull);
+      },
+    );
   });
 }

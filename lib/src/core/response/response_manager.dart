@@ -6,49 +6,71 @@ import '../errors/transport_exception.dart';
 import '../frame/device_frame.dart';
 import '../frame/frame_buffer.dart';
 import '../frame/frame_builder.dart';
+import '../frame/frame_parser.dart';
 import '../transport/connection_state.dart';
 import '../transport/device_transport.dart';
 import '../../protocol/commands/command_options.dart';
+import '../../protocol/constants/command_classes.dart';
 import '../../protocol/constants/operation_codes.dart';
+import '../../protocol/constants/profile_ids.dart';
+import '../../protocol/constants/ucp_addresses.dart';
+import '../../protocol/models/decoded_tlv.dart';
+import '../../protocol/models/ucp_packet_trace.dart';
+import '../../protocol/parsers/common_response_parser.dart';
+import '../../protocol/parsers/nack_parser.dart';
 import 'device_event.dart';
 import 'device_response.dart';
 import 'pending_request.dart';
 import 'sequence_generator.dart';
 
-/// Manages command lifecycle, response matching, and generic event emission.
-class ResponseManager {
+/// Manages request/response correlation for official UCP traffic.
+class UcpResponseManager {
   final DeviceTransport _transport;
   final FrameBuilder _frameBuilder;
   final FrameBuffer _frameBuffer;
+  final FrameParser _frameParser;
   final SequenceGenerator _sequenceGenerator;
   final int _protocolVersion;
+  final CommonResponseParser _responseParser;
+  final NackParser _nackParser;
 
-  final Map<int, PendingRequest> _pendingRequests = {};
+  final Map<_PendingRequestKey, PendingRequest> _pendingRequests =
+      <_PendingRequestKey, PendingRequest>{};
   final StreamController<DeviceEvent> _eventController =
       StreamController<DeviceEvent>.broadcast();
   final StreamController<DeviceFrame> _frameController =
       StreamController<DeviceFrame>.broadcast();
+  final StreamController<DeviceResponse> _dataController =
+      StreamController<DeviceResponse>.broadcast();
+  final StreamController<DeviceFrame> _streamController =
+      StreamController<DeviceFrame>.broadcast();
+  final StreamController<UcpPacketTrace> _traceController =
+      StreamController<UcpPacketTrace>.broadcast();
 
   StreamSubscription<List<int>>? _incomingSubscription;
   StreamSubscription<DeviceConnectionState>? _connectionSubscription;
+  bool _isDisposed = false;
 
   /// Default timeout for command operations.
   final Duration defaultTimeout;
 
-  bool _isDisposed = false;
-
-  ResponseManager({
+  UcpResponseManager({
     required DeviceTransport transport,
     this.defaultTimeout = const Duration(seconds: 5),
     FrameBuilder? frameBuilder,
     FrameBuffer? frameBuffer,
+    FrameParser? frameParser,
     SequenceGenerator? sequenceGenerator,
     int protocolVersion = 1,
+    CommonResponseParser responseParser = const CommonResponseParser(),
   }) : _transport = transport,
        _frameBuilder = frameBuilder ?? FrameBuilder(),
        _frameBuffer = frameBuffer ?? FrameBuffer(),
+       _frameParser = frameParser ?? FrameParser(),
        _sequenceGenerator = sequenceGenerator ?? SequenceGenerator(),
-       _protocolVersion = protocolVersion {
+       _protocolVersion = protocolVersion,
+       _responseParser = responseParser,
+       _nackParser = NackParser(responseParser: responseParser) {
     _bindTransport();
   }
 
@@ -58,8 +80,21 @@ class ResponseManager {
   /// Stream of parsed inbound frames.
   Stream<DeviceFrame> get frames => _frameController.stream;
 
+  /// Stream of DATA frames, including unmatched unsolicited DATA packets.
+  Stream<DeviceResponse> get dataResponses => _dataController.stream;
+
+  /// Stream of STREAM frames.
+  Stream<DeviceFrame> get streamFrames => _streamController.stream;
+
+  /// Timestamped packet trace stream for diagnostics.
+  Stream<UcpPacketTrace> get packetTraces => _traceController.stream;
+
   /// The number of currently pending requests.
   int get pendingCount => _pendingRequests.length;
+
+  List<DecodedTlv> decodeTlvs(DeviceFrame frame) {
+    return _responseParser.decodeFrame(frame);
+  }
 
   void _bindTransport() {
     _incomingSubscription = _transport.incomingBytes.listen(
@@ -79,8 +114,12 @@ class ResponseManager {
   Future<DeviceResponse> sendCommand({
     required int commandId,
     int productId = 0,
-    int address = 0,
-    int op = OperationCodes.read,
+    int profileId = ProfileIds.defaultProfile,
+    int sourceAddress = UcpAddresses.defaultSource,
+    int address = UcpAddresses.defaultDestination,
+    int? destinationAddress,
+    int op = OperationCodes.req,
+    int commandClass = CommandClasses.system,
     int version = -1,
     List<int> payload = const [],
     int flags = 0,
@@ -94,24 +133,35 @@ class ResponseManager {
       timeout: timeout,
       options: options,
     );
+    final resolvedDestination = destinationAddress ?? address;
     final pending = PendingRequest(
       sequence: sequence,
       productId: productId,
-      address: address,
+      profileId: profileId,
+      sourceAddress: sourceAddress,
+      destinationAddress: resolvedDestination,
       commandId: commandId,
       op: op,
+      commandClass: commandClass,
       flags: flags,
       payload: payload,
       options: effectiveOptions,
     );
-
-    _pendingRequests[sequence] = pending;
+    final key = _PendingRequestKey(
+      sequence: sequence,
+      commandClass: commandClass,
+      commandId: commandId,
+    );
+    _pendingRequests[key] = pending;
 
     final frameBytes = _frameBuilder.build(
       version: version == -1 ? _protocolVersion : version,
       productId: productId,
-      address: address,
+      profileId: profileId,
+      sourceAddress: sourceAddress,
+      destinationAddress: resolvedDestination,
       op: op,
+      commandClass: commandClass,
       commandId: commandId,
       sequence: sequence,
       flags: flags,
@@ -120,19 +170,25 @@ class ResponseManager {
 
     try {
       await _transport.write(frameBytes);
+      _emitTrace(UcpPacketDirection.tx, frameBytes);
     } on Object {
-      _pendingRequests.remove(sequence);
+      _pendingRequests.remove(key);
       rethrow;
     }
 
-    if (!effectiveOptions.waitForAck && !effectiveOptions.waitForData) {
-      _pendingRequests.remove(sequence);
+    if (!effectiveOptions.waitForAck &&
+        !effectiveOptions.waitForData &&
+        !effectiveOptions.completeOnEvent) {
+      _pendingRequests.remove(key);
       final response = DeviceResponse.success(
         sequence: sequence,
         productId: productId,
-        address: address,
+        profileId: profileId,
+        sourceAddress: sourceAddress,
+        destinationAddress: resolvedDestination,
         commandId: commandId,
         op: op,
+        commandClass: commandClass,
         flags: flags,
         payload: payload,
       );
@@ -152,7 +208,9 @@ class ResponseManager {
   /// Sends a prebuilt frame through the transport without request tracking.
   Future<void> sendFrame(DeviceFrame frame) async {
     _throwIfDisposed();
-    await _transport.write(_frameBuilder.buildFromFrame(frame));
+    final bytes = _frameBuilder.buildFromFrame(frame);
+    await _transport.write(bytes);
+    _emitTrace(UcpPacketDirection.tx, bytes, frame: frame);
   }
 
   CommandOptions _resolveOptions({Duration? timeout, CommandOptions? options}) {
@@ -187,14 +245,30 @@ class ResponseManager {
     if (!_frameController.isClosed) {
       _frameController.add(frame);
     }
+    _emitTrace(
+      UcpPacketDirection.rx,
+      _frameBuilder.buildFromFrame(frame),
+      frame: frame,
+    );
 
     if (frame.isEvent) {
-      _emitEvent(DeviceEvent.fromFrame(frame, inferEventCodeFromPayload: true));
+      final event = DeviceEvent.fromFrame(
+        frame,
+        inferEventCodeFromPayload: true,
+      );
+      _emitEvent(event);
+      final pending = _pendingRequests[_keyForFrame(frame)];
+      if (pending != null && pending.options.completeOnEvent) {
+        _pendingRequests.remove(_keyForFrame(frame));
+        pending.complete(DeviceResponse.fromFrame(frame));
+      }
       return;
     }
 
-    final pending = _pendingRequests[frame.sequence];
-    if (pending == null) {
+    if (frame.isStream) {
+      if (!_streamController.isClosed) {
+        _streamController.add(frame);
+      }
       return;
     }
 
@@ -203,26 +277,39 @@ class ResponseManager {
       errorMessage: frame.isNack ? 'Device returned NACK' : null,
     );
 
+    if (frame.isData && !_dataController.isClosed) {
+      _dataController.add(response);
+    }
+
+    final pending = _pendingRequests[_keyForFrame(frame)];
+    if (pending == null) {
+      return;
+    }
+
     if (frame.isAck) {
-      _handleAck(pending, response);
+      _handleAck(_keyForFrame(frame), pending, response);
       return;
     }
 
     if (frame.isNack) {
-      _handleNack(pending, response);
+      _handleNack(_keyForFrame(frame), pending, response);
       return;
     }
 
     if (frame.isData) {
-      _handleData(pending, response);
+      _handleData(_keyForFrame(frame), pending, response);
     }
   }
 
-  void _handleAck(PendingRequest pending, DeviceResponse response) {
+  void _handleAck(
+    _PendingRequestKey key,
+    PendingRequest pending,
+    DeviceResponse response,
+  ) {
     pending.markAckReceived(response);
 
     if (!pending.options.waitForData) {
-      _pendingRequests.remove(pending.sequence);
+      _pendingRequests.remove(key);
       pending.complete(response);
       return;
     }
@@ -230,20 +317,27 @@ class ResponseManager {
     pending.startDataTimeout(_onDataTimeout);
   }
 
-  void _handleNack(PendingRequest pending, DeviceResponse response) {
-    _pendingRequests.remove(pending.sequence);
+  void _handleNack(
+    _PendingRequestKey key,
+    PendingRequest pending,
+    DeviceResponse response,
+  ) {
+    _pendingRequests.remove(key);
+    final details = _nackParser.parseDetails(response);
     pending.completeError(
       ProtocolException(
-        response.errorMessage ?? 'Device returned NACK',
-        errorCode: response.payload.isNotEmpty
-            ? response.payload.first
-            : response.flags,
+        details.text ?? response.errorMessage ?? 'Device returned NACK',
+        errorCode: details.errorCode ?? response.flags,
         protocolErrorType: ProtocolErrorType.nackReceived,
       ),
     );
   }
 
-  void _handleData(PendingRequest pending, DeviceResponse response) {
+  void _handleData(
+    _PendingRequestKey key,
+    PendingRequest pending,
+    DeviceResponse response,
+  ) {
     if (pending.options.waitForAck && !pending.ackReceived) {
       return;
     }
@@ -252,7 +346,7 @@ class ResponseManager {
       return;
     }
 
-    _pendingRequests.remove(pending.sequence);
+    _pendingRequests.remove(key);
     pending.complete(response);
   }
 
@@ -262,13 +356,59 @@ class ResponseManager {
     }
   }
 
-  /// Fails a pending request by sequence number.
-  void cancelRequest(int sequenceNumber) {
-    final pending = _pendingRequests.remove(sequenceNumber);
-    if (pending == null) {
+  void _emitTrace(
+    UcpPacketDirection direction,
+    List<int> bytes, {
+    DeviceFrame? frame,
+  }) {
+    if (_traceController.isClosed) {
       return;
     }
-    pending.completeError(
+
+    final resolvedFrame = frame ?? _tryParseFrame(bytes);
+    final decodedTlvs = resolvedFrame == null
+        ? const <DecodedTlv>[]
+        : decodeTlvs(resolvedFrame);
+    _traceController.add(
+      UcpPacketTrace(
+        direction: direction,
+        bytes: bytes,
+        frame: resolvedFrame,
+        decodedTlvs: decodedTlvs,
+      ),
+    );
+  }
+
+  DeviceFrame? _tryParseFrame(List<int> bytes) {
+    try {
+      return _frameParser.parse(bytes);
+    } on Object {
+      return null;
+    }
+  }
+
+  _PendingRequestKey _keyForFrame(DeviceFrame frame) {
+    return _PendingRequestKey(
+      sequence: frame.sequence,
+      commandClass: frame.commandClass,
+      commandId: frame.commandId,
+    );
+  }
+
+  /// Fails a pending request by sequence number.
+  void cancelRequest(int sequenceNumber) {
+    MapEntry<_PendingRequestKey, PendingRequest>? matchedEntry;
+    for (final entry in _pendingRequests.entries) {
+      if (entry.value.sequence == sequenceNumber) {
+        matchedEntry = entry;
+        break;
+      }
+    }
+    if (matchedEntry == null) {
+      return;
+    }
+    _pendingRequests.remove(matchedEntry.key);
+    matchedEntry.value.completeError(
       TimeoutException(
         'Request cancelled',
         timeoutDuration: Duration.zero,
@@ -279,7 +419,9 @@ class ResponseManager {
 
   /// Fails all pending requests with a cancellation timeout exception.
   void cancelAll() {
-    final requests = Map<int, PendingRequest>.from(_pendingRequests);
+    final requests = Map<_PendingRequestKey, PendingRequest>.from(
+      _pendingRequests,
+    );
     _pendingRequests.clear();
     for (final pending in requests.values) {
       pending.completeError(
@@ -294,7 +436,9 @@ class ResponseManager {
 
   /// Fails all pending requests because the transport disconnected.
   void failAllPendingOnDisconnect(DeviceConnectionState state) {
-    final requests = Map<int, PendingRequest>.from(_pendingRequests);
+    final requests = Map<_PendingRequestKey, PendingRequest>.from(
+      _pendingRequests,
+    );
     _pendingRequests.clear();
     for (final pending in requests.values) {
       pending.completeError(
@@ -311,7 +455,8 @@ class ResponseManager {
   }
 
   void _onAckTimeout(PendingRequest request) {
-    _pendingRequests.remove(request.sequence);
+    final key = _keyForPending(request);
+    _pendingRequests.remove(key);
     request.completeError(
       TimeoutException(
         'Request ${request.sequence} timed out waiting for ACK',
@@ -322,13 +467,22 @@ class ResponseManager {
   }
 
   void _onDataTimeout(PendingRequest request) {
-    _pendingRequests.remove(request.sequence);
+    final key = _keyForPending(request);
+    _pendingRequests.remove(key);
     request.completeError(
       TimeoutException(
         'Request ${request.sequence} timed out waiting for DATA',
         timeoutDuration: request.options.dataTimeout,
         operation: 'Request ${request.sequence} DATA',
       ),
+    );
+  }
+
+  _PendingRequestKey _keyForPending(PendingRequest request) {
+    return _PendingRequestKey(
+      sequence: request.sequence,
+      commandClass: request.commandClass,
+      commandId: request.commandId,
     );
   }
 
@@ -344,11 +498,52 @@ class ResponseManager {
     _connectionSubscription?.cancel();
     _eventController.close();
     _frameController.close();
+    _dataController.close();
+    _streamController.close();
+    _traceController.close();
   }
 
   void _throwIfDisposed() {
     if (_isDisposed) {
-      throw StateError('ResponseManager has been disposed');
+      throw StateError('UcpResponseManager has been disposed');
     }
   }
+}
+
+/// Backward-compatible alias class.
+class ResponseManager extends UcpResponseManager {
+  ResponseManager({
+    required super.transport,
+    super.defaultTimeout,
+    super.frameBuilder,
+    super.frameBuffer,
+    super.frameParser,
+    super.sequenceGenerator,
+    super.protocolVersion,
+    super.responseParser,
+  });
+}
+
+class _PendingRequestKey {
+  final int sequence;
+  final int commandClass;
+  final int commandId;
+
+  const _PendingRequestKey({
+    required this.sequence,
+    required this.commandClass,
+    required this.commandId,
+  });
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is _PendingRequestKey &&
+          runtimeType == other.runtimeType &&
+          sequence == other.sequence &&
+          commandClass == other.commandClass &&
+          commandId == other.commandId;
+
+  @override
+  int get hashCode => Object.hash(sequence, commandClass, commandId);
 }

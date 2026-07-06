@@ -21,7 +21,11 @@ class ProtocolVersion {
   }
 
   /// Whether this version is at least the specified version.
-  bool isAtLeast(int requiredMajor, int requiredMinor, [int requiredPatch = 0]) {
+  bool isAtLeast(
+    int requiredMajor,
+    int requiredMinor, [
+    int requiredPatch = 0,
+  ]) {
     if (major > requiredMajor) return true;
     if (major < requiredMajor) return false;
     if (minor > requiredMinor) return true;

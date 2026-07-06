@@ -1,12 +1,4 @@
-/// Implements CRC-16-CCITT with configurable polynomial, initial value, and final XOR.
-///
-/// This is a common CRC variant used in many device communication protocols.
-/// The standard CRC-16-CCITT (0x1021, init 0xFFFF, xor 0x0000) is available
-/// via the static [compute], [verify], and [computeBytesBE] methods.
-///
-/// **Important:** The exact CRC variant (polynomial, initial value, final XOR,
-/// and byte order) must match the firmware implementation on the target device.
-/// Mismatched CRC parameters will cause all frames to be rejected.
+/// Implements CRC-16/CCITT-style variants with configurable parameters.
 class Crc16Ccitt {
   /// The generator polynomial (e.g., 0x1021 for CRC-16-CCITT).
   final int polynomial;
@@ -37,16 +29,15 @@ class Crc16Ccitt {
     _table = _buildTable();
   }
 
-  /// Creates a [Crc16Ccitt] instance matching the standard CRC-16-CCITT:
-  /// polynomial=0x1021, init=0xFFFF, finalXor=0x0000.
-  ///
-  /// This is the most common variant and matches the CCITT/ITU recommendation.
-  factory Crc16Ccitt.standard() => Crc16Ccitt();
+  /// CRC-16/CCITT-FALSE as required by the UCP guide.
+  factory Crc16Ccitt.ccittFalse() =>
+      Crc16Ccitt(polynomial: 0x1021, initialValue: 0xFFFF, finalXor: 0x0000);
 
-  /// Creates a [Crc16Ccitt] instance matching CRC-16-CCITT-FALSE:
-  /// polynomial=0x1021, init=0x0000, finalXor=0x0000.
-  factory Crc16Ccitt.false_() =>
-      Crc16Ccitt(polynomial: 0x1021, initialValue: 0x0000, finalXor: 0x0000);
+  /// Backward-compatible alias.
+  factory Crc16Ccitt.standard() => Crc16Ccitt.ccittFalse();
+
+  /// Backward-compatible alias for legacy call sites.
+  factory Crc16Ccitt.false_() => Crc16Ccitt.ccittFalse();
 
   /// Creates a [Crc16Ccitt] instance matching CRC-16-IBM:
   /// polynomial=0x8005, init=0x0000, finalXor=0x0000.
@@ -89,10 +80,7 @@ class Crc16Ccitt {
   /// This is the byte order used in the device frame protocol.
   List<int> computeBytesBE(List<int> data) {
     final crc = compute(data);
-    return [
-      (crc >> 8) & 0xFF,
-      crc & 0xFF,
-    ];
+    return [(crc >> 8) & 0xFF, crc & 0xFF];
   }
 
   /// Verifies that the CRC of [data] matches [expectedCrc].
@@ -105,10 +93,7 @@ class Crc16Ccitt {
 
   /// Appends the CRC-16 value (big-endian) to [data] and returns the result.
   List<int> append(List<int> data) {
-    return [
-      ...data,
-      ...computeBytesBE(data),
-    ];
+    return [...data, ...computeBytesBE(data)];
   }
 
   /// Validates that [value] is in the uint16 range (0-65535).
@@ -125,8 +110,7 @@ class Crc16Ccitt {
   // These match the most common CRC-16-CCITT variant (0x1021, init 0xFFFF).
   // ---------------------------------------------------------------------------
 
-  /// Default standard CRC-16-CCITT instance (0x1021, init 0xFFFF, xor 0x0000).
-  static final Crc16Ccitt _default = Crc16Ccitt.standard();
+  static final Crc16Ccitt _default = Crc16Ccitt.ccittFalse();
 
   /// Computes the CRC-16-CCITT for [data] using standard parameters
   /// (polynomial=0x1021, init=0xFFFF, finalXor=0x0000).

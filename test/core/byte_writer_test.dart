@@ -19,18 +19,12 @@ void main() {
 
     test('writeUint8 throws on negative value', () {
       final writer = ByteWriter();
-      expect(
-        () => writer.writeUint8(-1),
-        throwsArgumentError,
-      );
+      expect(() => writer.writeUint8(-1), throwsArgumentError);
     });
 
     test('writeUint8 throws on value > 255', () {
       final writer = ByteWriter();
-      expect(
-        () => writer.writeUint8(256),
-        throwsArgumentError,
-      );
+      expect(() => writer.writeUint8(256), throwsArgumentError);
     });
 
     test('writeUint16BE', () {
@@ -48,18 +42,12 @@ void main() {
 
     test('writeUint16BE throws on negative value', () {
       final writer = ByteWriter();
-      expect(
-        () => writer.writeUint16BE(-1),
-        throwsArgumentError,
-      );
+      expect(() => writer.writeUint16BE(-1), throwsArgumentError);
     });
 
     test('writeUint16BE throws on value > 65535', () {
       final writer = ByteWriter();
-      expect(
-        () => writer.writeUint16BE(65536),
-        throwsArgumentError,
-      );
+      expect(() => writer.writeUint16BE(65536), throwsArgumentError);
     });
 
     test('writeUint32BE', () {
@@ -72,23 +60,26 @@ void main() {
       final writer = ByteWriter();
       writer.writeUint32BE(0);
       writer.writeUint32BE(4294967295);
-      expect(writer.toBytes(), [0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF]);
+      expect(writer.toBytes(), [
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0xFF,
+        0xFF,
+        0xFF,
+        0xFF,
+      ]);
     });
 
     test('writeUint32BE throws on negative value', () {
       final writer = ByteWriter();
-      expect(
-        () => writer.writeUint32BE(-1),
-        throwsArgumentError,
-      );
+      expect(() => writer.writeUint32BE(-1), throwsArgumentError);
     });
 
     test('writeUint32BE throws on value > 4294967295', () {
       final writer = ByteWriter();
-      expect(
-        () => writer.writeUint32BE(4294967296),
-        throwsArgumentError,
-      );
+      expect(() => writer.writeUint32BE(4294967296), throwsArgumentError);
     });
 
     test('writeBytes', () {
@@ -99,18 +90,12 @@ void main() {
 
     test('writeBytes throws on invalid byte', () {
       final writer = ByteWriter();
-      expect(
-        () => writer.writeBytes([0x01, 256, 0x03]),
-        throwsArgumentError,
-      );
+      expect(() => writer.writeBytes([0x01, 256, 0x03]), throwsArgumentError);
     });
 
     test('writeBytes throws on negative byte', () {
       final writer = ByteWriter();
-      expect(
-        () => writer.writeBytes([0x01, -1, 0x03]),
-        throwsArgumentError,
-      );
+      expect(() => writer.writeBytes([0x01, -1, 0x03]), throwsArgumentError);
     });
 
     test('writeAscii', () {
@@ -121,10 +106,7 @@ void main() {
 
     test('writeAscii throws on non-ASCII character', () {
       final writer = ByteWriter();
-      expect(
-        () => writer.writeAscii('A\u00E9C'),
-        throwsArgumentError,
-      );
+      expect(() => writer.writeAscii('A\u00E9C'), throwsArgumentError);
     });
 
     test('writeUtf8', () {
@@ -148,9 +130,14 @@ void main() {
       writer.writeBytes([0x08, 0x09]);
       expect(writer.toBytes(), [
         0x01,
-        0x02, 0x03,
-        0x04, 0x05, 0x06, 0x07,
-        0x08, 0x09,
+        0x02,
+        0x03,
+        0x04,
+        0x05,
+        0x06,
+        0x07,
+        0x08,
+        0x09,
       ]);
     });
 

@@ -18,10 +18,7 @@ void main() {
     test('readUint8 throws when past end', () {
       final reader = ByteReader([0x01]);
       reader.readUint8();
-      expect(
-        () => reader.readUint8(),
-        throwsA(isA<ByteReaderException>()),
-      );
+      expect(() => reader.readUint8(), throwsA(isA<ByteReaderException>()));
     });
 
     test('readUint16BE', () {
@@ -38,10 +35,7 @@ void main() {
 
     test('readUint16BE throws when insufficient bytes', () {
       final reader = ByteReader([0x01]);
-      expect(
-        () => reader.readUint16BE(),
-        throwsA(isA<ByteReaderException>()),
-      );
+      expect(() => reader.readUint16BE(), throwsA(isA<ByteReaderException>()));
     });
 
     test('readUint32BE', () {
@@ -52,8 +46,14 @@ void main() {
 
     test('readUint32BE at boundaries', () {
       final reader = ByteReader([
-        0x00, 0x00, 0x00, 0x00,
-        0xFF, 0xFF, 0xFF, 0xFF,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0xFF,
+        0xFF,
+        0xFF,
+        0xFF,
       ]);
       expect(reader.readUint32BE(), 0x00000000);
       expect(reader.readUint32BE(), 0xFFFFFFFF);
@@ -61,10 +61,7 @@ void main() {
 
     test('readUint32BE throws when insufficient bytes', () {
       final reader = ByteReader([0x01, 0x02, 0x03]);
-      expect(
-        () => reader.readUint32BE(),
-        throwsA(isA<ByteReaderException>()),
-      );
+      expect(() => reader.readUint32BE(), throwsA(isA<ByteReaderException>()));
     });
 
     test('readBytes', () {
@@ -77,10 +74,7 @@ void main() {
 
     test('readBytes throws when insufficient bytes', () {
       final reader = ByteReader([0x01, 0x02]);
-      expect(
-        () => reader.readBytes(3),
-        throwsA(isA<ByteReaderException>()),
-      );
+      expect(() => reader.readBytes(3), throwsA(isA<ByteReaderException>()));
     });
 
     test('readRemainingBytes', () {

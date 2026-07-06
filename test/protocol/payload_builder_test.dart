@@ -9,23 +9,17 @@ void main() {
     });
 
     test('adds uint8', () {
-      final payload = PayloadBuilder()
-          .addUint8(0x42)
-          .build();
+      final payload = PayloadBuilder().addUint8(0x42).build();
       expect(payload, [0x42]);
     });
 
     test('adds uint16 big-endian', () {
-      final payload = PayloadBuilder()
-          .addUint16BE(0x1234)
-          .build();
+      final payload = PayloadBuilder().addUint16BE(0x1234).build();
       expect(payload, [0x12, 0x34]);
     });
 
     test('adds uint32 big-endian', () {
-      final payload = PayloadBuilder()
-          .addUint32BE(0x12345678)
-          .build();
+      final payload = PayloadBuilder().addUint32BE(0x12345678).build();
       expect(payload, [0x12, 0x34, 0x56, 0x78]);
     });
 
@@ -40,16 +34,12 @@ void main() {
     });
 
     test('adds length-prefixed string', () {
-      final payload = PayloadBuilder()
-          .addLengthPrefixedString('AB')
-          .build();
+      final payload = PayloadBuilder().addLengthPrefixedString('AB').build();
       expect(payload, [0x00, 0x02, 0x41, 0x42]);
     });
 
     test('adds null-terminated string', () {
-      final payload = PayloadBuilder()
-          .addNullTerminatedString('Hi')
-          .build();
+      final payload = PayloadBuilder().addNullTerminatedString('Hi').build();
       expect(payload, [0x48, 0x69, 0x00]);
     });
 
@@ -106,12 +96,19 @@ void main() {
   });
 
   group('CommonPayloads', () {
-    test('setTime encodes UTC epoch seconds as uint32BE', () {
+    test('setTime encodes official epoch_u64 TLV', () {
       final time = DateTime.utc(2026, 7, 2, 12, 34, 56);
       final payload = CommonPayloads.setTime(time);
       final epochSeconds = time.millisecondsSinceEpoch ~/ 1000;
 
       expect(payload, [
+        TlvTypes.epochU64,
+        0x00,
+        0x08,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
         (epochSeconds >> 24) & 0xFF,
         (epochSeconds >> 16) & 0xFF,
         (epochSeconds >> 8) & 0xFF,

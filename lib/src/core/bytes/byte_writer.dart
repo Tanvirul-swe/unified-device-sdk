@@ -20,9 +20,7 @@ class ByteWriter {
   /// Throws [ArgumentError] if [value] is outside the uint8 range.
   void writeUint8(int value) {
     if (value < 0 || value > 255) {
-      throw ArgumentError(
-        'uint8 value must be 0-255, but got $value',
-      );
+      throw ArgumentError('uint8 value must be 0-255, but got $value');
     }
     _buffer.add(value);
   }
@@ -41,15 +39,18 @@ class ByteWriter {
     _buffer.addAll(EndianUtils.uint32ToBytesBE(value));
   }
 
+  /// Writes a 64-bit unsigned integer in big-endian order.
+  void writeUint64BE(int value) {
+    _buffer.addAll(EndianUtils.uint64ToBytesBE(value));
+  }
+
   /// Writes a list of raw bytes. Each byte must be 0-255.
   ///
   /// Throws [ArgumentError] if any byte is outside the uint8 range.
   void writeBytes(List<int> bytes) {
     for (final byte in bytes) {
       if (byte < 0 || byte > 255) {
-        throw ArgumentError(
-          'All bytes must be 0-255, but found $byte',
-        );
+        throw ArgumentError('All bytes must be 0-255, but found $byte');
       }
     }
     _buffer.addAll(bytes);

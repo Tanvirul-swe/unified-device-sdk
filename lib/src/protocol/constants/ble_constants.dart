@@ -2,6 +2,8 @@
 class BleConstants {
   BleConstants._();
 
+  static const String defaultDeviceName = 'Aunkur_UCP1';
+
   // ---- BLE Roles ----
   static const int rolePeripheral = 0;
   static const int roleCentral = 1;
@@ -27,11 +29,13 @@ class BleConstants {
   static const int defaultMtu = 23;
 
   /// Preferred MTU size for data transfer.
-  /// TODO: Confirm with hardware team — 512 may be too large for some devices.
-  static const int preferredMtu = 512;
+  static const int preferredMtu = 517;
+
+  /// Fallback MTU size when the preferred request is unavailable.
+  static const int fallbackMtu = 256;
 
   /// Maximum supported MTU size.
-  static const int maxMtu = 512;
+  static const int maxMtu = 517;
 
   // ---- Advertisement ----
   /// Minimum advertisement interval (units of 0.625ms).

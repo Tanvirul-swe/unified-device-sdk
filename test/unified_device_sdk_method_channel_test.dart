@@ -12,23 +12,20 @@ void main() {
     setUp(() {
       platform = MethodChannelUnifiedDevice();
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(
-        channel,
-        (MethodCall methodCall) async {
-          switch (methodCall.method) {
-            case 'getPlatformVersion':
-              return '42';
-            case 'isBluetoothAvailable':
-              return true;
-            case 'isBluetoothEnabled':
-              return true;
-            case 'requestBluetoothPermissions':
-              return true;
-            default:
-              return null;
-          }
-        },
-      );
+          .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
+            switch (methodCall.method) {
+              case 'getPlatformVersion':
+                return '42';
+              case 'isBluetoothAvailable':
+                return true;
+              case 'isBluetoothEnabled':
+                return true;
+              case 'requestBluetoothPermissions':
+                return true;
+              default:
+                return null;
+            }
+          });
     });
 
     tearDown(() {

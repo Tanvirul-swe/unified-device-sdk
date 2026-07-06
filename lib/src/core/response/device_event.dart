@@ -1,4 +1,7 @@
 import '../frame/device_frame.dart';
+import '../../protocol/constants/command_classes.dart';
+import '../../protocol/constants/profile_ids.dart';
+import '../../protocol/constants/ucp_addresses.dart';
 
 /// Generic asynchronous event model derived from EVENT frames.
 class DeviceEvent {
@@ -8,8 +11,14 @@ class DeviceEvent {
   /// Product identifier from the frame header.
   final int productId;
 
+  final int profileId;
+  final int sourceAddress;
+  final int destinationAddress;
+
   /// Command identifier from the frame header.
   final int commandId;
+
+  final int commandClass;
 
   /// Optional event code when the payload shape supports one.
   final int? eventCode;
@@ -26,13 +35,19 @@ class DeviceEvent {
   DeviceEvent({
     required this.sequence,
     required this.productId,
+    this.profileId = ProfileIds.defaultProfile,
+    this.sourceAddress = UcpAddresses.defaultSource,
+    int? destinationAddress,
     required this.commandId,
+    this.commandClass = CommandClasses.system,
     this.eventCode,
     required List<int> payload,
     this.sourceFrame,
     DateTime? receivedAt,
-  })  : payload = List<int>.unmodifiable(payload),
-        receivedAt = receivedAt ?? DateTime.now();
+  }) : destinationAddress =
+           destinationAddress ?? UcpAddresses.defaultDestination,
+       payload = List<int>.unmodifiable(payload),
+       receivedAt = receivedAt ?? DateTime.now();
 
   /// Creates a [DeviceEvent] from a parsed frame.
   ///
@@ -46,7 +61,11 @@ class DeviceEvent {
     return DeviceEvent(
       sequence: frame.sequence,
       productId: frame.productId,
+      profileId: frame.profileId,
+      sourceAddress: frame.sourceAddress,
+      destinationAddress: frame.destinationAddress,
       commandId: frame.commandId,
+      commandClass: frame.commandClass,
       eventCode: inferEventCodeFromPayload && frame.payload.isNotEmpty
           ? frame.payload.first
           : null,

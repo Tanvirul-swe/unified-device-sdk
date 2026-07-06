@@ -9,7 +9,10 @@ class UnifiedDeviceLogger {
   final String tag;
 
   /// Creates a [UnifiedDeviceLogger] with the given tag and settings.
-  UnifiedDeviceLogger({this.tag = 'UnifiedDeviceSDK', this.debugEnabled = false});
+  UnifiedDeviceLogger({
+    this.tag = 'UnifiedDeviceSDK',
+    this.debugEnabled = false,
+  });
 
   /// Logs a debug message.
   void debug(String message) {

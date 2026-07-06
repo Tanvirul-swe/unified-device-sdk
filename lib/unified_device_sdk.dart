@@ -6,6 +6,7 @@
 // Core exports - Client
 export 'src/core/client/unified_device_client.dart';
 export 'src/core/client/unified_device_client_config.dart';
+export 'src/core/client/ucp_session_manager.dart';
 export 'src/core/client/unified_device_session.dart';
 
 // Core exports - Transport
@@ -51,7 +52,12 @@ export 'src/protocol/constants/ble_constants.dart';
 export 'src/protocol/constants/operation_codes.dart';
 export 'src/protocol/constants/protocol_flags.dart';
 export 'src/protocol/constants/product_ids.dart';
+export 'src/protocol/constants/profile_ids.dart';
+export 'src/protocol/constants/ucp_addresses.dart';
 export 'src/protocol/constants/common_command_ids.dart';
+export 'src/protocol/constants/command_classes.dart';
+export 'src/protocol/constants/command_ids.dart';
+export 'src/protocol/constants/tlv_types.dart';
 
 // Protocol exports - Commands
 export 'src/protocol/commands/device_command.dart';
@@ -63,12 +69,14 @@ export 'src/protocol/commands/common_commands.dart';
 export 'src/protocol/payloads/payload_builder.dart';
 export 'src/protocol/payloads/payload_codec.dart';
 export 'src/protocol/payloads/common_payloads.dart';
+export 'src/protocol/payloads/tlv_builder.dart';
 
 // Protocol exports - Parsers
 export 'src/protocol/parsers/response_parser.dart';
 export 'src/protocol/parsers/common_response_parser.dart';
 export 'src/protocol/parsers/nack_parser.dart';
 export 'src/protocol/parsers/event_parser.dart';
+export 'src/protocol/parsers/tlv_parser.dart';
 
 // Protocol exports - Models
 export 'src/protocol/models/device_info.dart';
@@ -76,6 +84,14 @@ export 'src/protocol/models/firmware_info.dart';
 export 'src/protocol/models/battery_info.dart';
 export 'src/protocol/models/device_status.dart';
 export 'src/protocol/models/protocol_version.dart';
+export 'src/protocol/models/tlv.dart';
+export 'src/protocol/models/decoded_tlv.dart';
+export 'src/protocol/models/ucp_device_info.dart';
+export 'src/protocol/models/ucp_time_snapshot.dart';
+export 'src/protocol/models/ucp_last_report.dart';
+export 'src/protocol/models/ucp_moisture_sample.dart';
+export 'src/protocol/models/ucp_nack_details.dart';
+export 'src/protocol/models/ucp_packet_trace.dart';
 
 // Platform exports
 export 'src/platform/unified_device_platform.dart';

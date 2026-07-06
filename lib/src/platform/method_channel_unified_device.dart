@@ -50,10 +50,9 @@ class MethodChannelUnifiedDevice extends UnifiedDevicePlatform {
   /// - `manufacturerData` (String?): Base64-encoded manufacturer data.
   /// - `serviceUuids` (`List<String>?`): List of advertised service UUIDs.
   @override
-  Stream<Map<String, dynamic>> get scanResults =>
-      _scanEventChannel.receiveBroadcastStream().map(
-        (event) => Map<String, dynamic>.from(event as Map),
-      );
+  Stream<Map<String, dynamic>> get scanResults => _scanEventChannel
+      .receiveBroadcastStream()
+      .map((event) => Map<String, dynamic>.from(event as Map));
 
   /// Stream of connection state maps from the native BLE connection.
   ///
@@ -62,10 +61,9 @@ class MethodChannelUnifiedDevice extends UnifiedDevicePlatform {
   ///   `disconnected`, `connectionLost`.
   /// - `deviceId` (String?): The device identifier.
   @override
-  Stream<Map<String, dynamic>> get connectionState =>
-      _connectionEventChannel.receiveBroadcastStream().map(
-        (event) => Map<String, dynamic>.from(event as Map),
-      );
+  Stream<Map<String, dynamic>> get connectionState => _connectionEventChannel
+      .receiveBroadcastStream()
+      .map((event) => Map<String, dynamic>.from(event as Map));
 
   /// Stream of notification data maps from the native BLE notifications.
   ///
@@ -73,17 +71,15 @@ class MethodChannelUnifiedDevice extends UnifiedDevicePlatform {
   /// - `data` (String): Base64-encoded byte data.
   @override
   Stream<Map<String, dynamic>> get notificationData =>
-      _notificationEventChannel.receiveBroadcastStream().map(
-        (event) {
-          if (event is Map) {
-            return Map<String, dynamic>.from(event);
-          } else if (event is Uint8List) {
-            return {'data': event};
-          } else {
-            throw ArgumentError('Unsupported event type: ${event.runtimeType}');
-          }
-        },
-      );
+      _notificationEventChannel.receiveBroadcastStream().map((event) {
+        if (event is Map) {
+          return Map<String, dynamic>.from(event);
+        } else if (event is Uint8List) {
+          return {'data': event};
+        } else {
+          throw ArgumentError('Unsupported event type: ${event.runtimeType}');
+        }
+      });
 
   // ---- Platform Queries ----
 

@@ -6,11 +6,38 @@ enum DeviceConnectionState {
   /// Device is disconnected.
   disconnected,
 
+  /// Device discovery scan is active.
+  scanning,
+
   /// Device is in the process of connecting.
   connecting,
 
-  /// Device is connected and ready.
+  /// BLE link is connected.
   connected,
+
+  /// Required GATT services have been discovered.
+  servicesDiscovered,
+
+  /// Notify characteristic subscription is active.
+  notifySubscribed,
+
+  /// BLE MTU negotiation has completed or been assumed ready.
+  mtuReady,
+
+  /// BLE transport prerequisites are satisfied.
+  transportReady,
+
+  /// UCP session bootstrap has completed.
+  sessionActive,
+
+  /// A measurement workflow is in progress.
+  measurementActive,
+
+  /// A live stream workflow is in progress.
+  streamActive,
+
+  /// A graceful session close has been requested.
+  safeDisconnectPending,
 
   /// Device is in the process of disconnecting.
   disconnecting,

@@ -23,10 +23,7 @@ class FrameValidationResult {
 
   /// Creates a successful validation result.
   factory FrameValidationResult.success(DeviceFrame frame) {
-    return FrameValidationResult._(
-      isValid: true,
-      frame: frame,
-    );
+    return FrameValidationResult._(isValid: true, frame: frame);
   }
 
   /// Creates a failed validation result.

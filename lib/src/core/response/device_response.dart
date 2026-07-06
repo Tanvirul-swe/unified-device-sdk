@@ -1,5 +1,8 @@
 import '../frame/device_frame.dart';
+import '../../protocol/constants/command_classes.dart';
 import '../../protocol/constants/operation_codes.dart';
+import '../../protocol/constants/profile_ids.dart';
+import '../../protocol/constants/ucp_addresses.dart';
 
 /// Generic response model derived from a device frame.
 class DeviceResponse {
@@ -9,14 +12,17 @@ class DeviceResponse {
   /// Product identifier from the frame header.
   final int productId;
 
-  /// Device address from the frame header.
-  final int address;
+  final int profileId;
+  final int sourceAddress;
+  final int destinationAddress;
 
   /// Command identifier from the frame header.
   final int commandId;
 
   /// Operation code from the frame header.
   final int op;
+
+  final int commandClass;
 
   /// Flags byte from the frame header.
   final int flags;
@@ -36,16 +42,24 @@ class DeviceResponse {
   DeviceResponse({
     required this.sequence,
     required this.productId,
-    required this.address,
+    this.profileId = ProfileIds.defaultProfile,
+    this.sourceAddress = UcpAddresses.defaultSource,
+    int? address,
+    int? destinationAddress,
     required this.commandId,
     required this.op,
+    this.commandClass = CommandClasses.system,
     required this.flags,
     required List<int> payload,
     this.sourceFrame,
     this.errorMessage,
     DateTime? receivedAt,
-  })  : payload = List<int>.unmodifiable(payload),
-        receivedAt = receivedAt ?? DateTime.now();
+  }) : destinationAddress =
+           destinationAddress ?? address ?? UcpAddresses.defaultDestination,
+       payload = List<int>.unmodifiable(payload),
+       receivedAt = receivedAt ?? DateTime.now();
+
+  int get address => destinationAddress;
 
   /// Creates a [DeviceResponse] from a parsed frame.
   factory DeviceResponse.fromFrame(
@@ -56,9 +70,12 @@ class DeviceResponse {
     return DeviceResponse(
       sequence: frame.sequence,
       productId: frame.productId,
-      address: frame.address,
+      profileId: frame.profileId,
+      sourceAddress: frame.sourceAddress,
+      destinationAddress: frame.destinationAddress,
       commandId: frame.commandId,
       op: frame.op,
+      commandClass: frame.commandClass,
       flags: frame.flags,
       payload: frame.payload,
       sourceFrame: frame,
@@ -86,9 +103,13 @@ class DeviceResponse {
   factory DeviceResponse.success({
     required int sequence,
     int productId = 0,
-    int address = 0,
+    int profileId = ProfileIds.defaultProfile,
+    int sourceAddress = UcpAddresses.defaultSource,
+    int address = UcpAddresses.defaultDestination,
+    int? destinationAddress,
     required int commandId,
     int op = OperationCodes.ack,
+    int commandClass = CommandClasses.system,
     int flags = 0,
     List<int> payload = const [],
     DeviceFrame? sourceFrame,
@@ -97,9 +118,12 @@ class DeviceResponse {
     return DeviceResponse(
       sequence: sequence,
       productId: productId,
-      address: address,
+      profileId: profileId,
+      sourceAddress: sourceAddress,
+      destinationAddress: destinationAddress ?? address,
       commandId: commandId,
       op: op,
+      commandClass: commandClass,
       flags: flags,
       payload: payload,
       sourceFrame: sourceFrame,
@@ -111,9 +135,13 @@ class DeviceResponse {
   factory DeviceResponse.failure({
     required int sequence,
     int productId = 0,
-    int address = 0,
+    int profileId = ProfileIds.defaultProfile,
+    int sourceAddress = UcpAddresses.defaultSource,
+    int address = UcpAddresses.defaultDestination,
+    int? destinationAddress,
     required int commandId,
     int op = OperationCodes.nack,
+    int commandClass = CommandClasses.system,
     int flags = 0,
     List<int> payload = const [],
     String? errorMessage,
@@ -123,9 +151,12 @@ class DeviceResponse {
     return DeviceResponse(
       sequence: sequence,
       productId: productId,
-      address: address,
+      profileId: profileId,
+      sourceAddress: sourceAddress,
+      destinationAddress: destinationAddress ?? address,
       commandId: commandId,
       op: op,
+      commandClass: commandClass,
       flags: flags,
       payload: payload,
       sourceFrame: sourceFrame,

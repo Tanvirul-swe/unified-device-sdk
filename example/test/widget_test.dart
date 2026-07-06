@@ -6,11 +6,7 @@ import 'package:unified_device_sdk/unified_device_sdk.dart';
 
 void main() {
   testWidgets('renders debug console shell', (WidgetTester tester) async {
-    await tester.pumpWidget(
-      MyApp(
-        platform: _FakePlatform(),
-      ),
-    );
+    await tester.pumpWidget(MyApp(platform: _FakePlatform()));
     await tester.pumpAndSettle();
 
     expect(find.text('Unified Device Debug Console'), findsOneWidget);
@@ -28,7 +24,8 @@ class _FakePlatform extends UnifiedDevicePlatform {
       StreamController<Map<String, dynamic>>.broadcast();
 
   @override
-  Stream<Map<String, dynamic>> get connectionState => _connectionController.stream;
+  Stream<Map<String, dynamic>> get connectionState =>
+      _connectionController.stream;
 
   @override
   Stream<Map<String, dynamic>> get notificationData =>

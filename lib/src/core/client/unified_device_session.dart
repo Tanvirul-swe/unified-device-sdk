@@ -14,12 +14,28 @@ class UnifiedDeviceSession {
   /// The current connection state.
   DeviceConnectionState state;
 
+  /// Whether the UCP session bootstrap has completed.
+  bool sessionActive;
+
+  /// Whether a measurement workflow is active.
+  bool measurementActive;
+
+  /// Whether a stream workflow is active.
+  bool streamActive;
+
+  /// Whether a graceful close is pending.
+  bool safeDisconnectPending;
+
   /// Creates a [UnifiedDeviceSession].
   UnifiedDeviceSession({
     required this.deviceId,
     this.deviceName,
     DateTime? startedAt,
     this.state = DeviceConnectionState.connected,
+    this.sessionActive = false,
+    this.measurementActive = false,
+    this.streamActive = false,
+    this.safeDisconnectPending = false,
   }) : startedAt = startedAt ?? DateTime.now();
 
   /// The duration the session has been active.
@@ -27,12 +43,14 @@ class UnifiedDeviceSession {
 
   /// Whether the session is still active.
   bool get isActive =>
-      state == DeviceConnectionState.connected ||
-      state == DeviceConnectionState.connecting;
+      state != DeviceConnectionState.disconnected &&
+      state != DeviceConnectionState.connectionLost;
 
   @override
   String toString() {
     return 'UnifiedDeviceSession(device: $deviceId, name: $deviceName, '
-        'state: $state, duration: $duration)';
+        'state: $state, sessionActive: $sessionActive, '
+        'measurementActive: $measurementActive, streamActive: $streamActive, '
+        'safeDisconnectPending: $safeDisconnectPending, duration: $duration)';
   }
 }

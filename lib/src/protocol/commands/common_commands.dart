@@ -2,17 +2,21 @@ import 'dart:async';
 import 'command_result.dart';
 import '../../core/client/unified_device_client.dart';
 import '../constants/common_command_ids.dart';
+import '../constants/command_classes.dart';
 import '../constants/operation_codes.dart';
-import '../parsers/common_response_parser.dart';
-import '../payloads/common_payloads.dart';
+import '../constants/product_ids.dart';
+import '../constants/tlv_types.dart';
+import '../models/battery_info.dart';
+import '../models/device_info.dart';
+import '../models/firmware_info.dart';
+import '../payloads/tlv_builder.dart';
 
 /// Provides convenience methods for common device commands.
 class CommonCommands {
   final UnifiedDeviceClient _client;
-  final CommonResponseParser _parser;
 
   /// Creates a [CommonCommands] instance bound to a client.
-  CommonCommands(this._client) : _parser = CommonResponseParser();
+  CommonCommands(this._client);
 
   /// Pings the device to check if it's responsive.
   Future<PingResult> ping() async {
@@ -20,6 +24,7 @@ class CommonCommands {
     await _client.sendCommand(
       productId: 0,
       op: OperationCodes.action,
+      commandClass: CommandClasses.session,
       commandId: CommonCommandIds.ping,
     );
     stopwatch.stop();
@@ -28,43 +33,61 @@ class CommonCommands {
 
   /// Retrieves device information.
   Future<DeviceInfoResult> getDeviceInfo() async {
-    final response = await _client.sendCommand(
-      productId: 0,
-      op: OperationCodes.read,
-      commandId: CommonCommandIds.readDeviceInfo,
+    final response = await _client.deviceInfo();
+    return DeviceInfoResult(
+      DeviceInfo(
+        productId: ProductIds.aunkurUcp1,
+        hardwareVersion: 0,
+        serialNumber: response.aunkurId ?? '',
+        manufacturerName: 'ELAB',
+        modelName: response.deviceName ?? '',
+      ),
     );
-    return DeviceInfoResult(_parser.parseDeviceInfo(response.payload));
   }
 
   /// Retrieves firmware version information.
   Future<FirmwareVersionResult> getFirmwareVersion() async {
-    final response = await _client.sendCommand(
-      productId: 0,
-      op: OperationCodes.read,
-      commandId: CommonCommandIds.readFirmwareVersion,
+    final response = await _client.deviceInfo();
+    return FirmwareVersionResult(
+      FirmwareInfo(
+        major: 0,
+        minor: 0,
+        patch: 0,
+        buildNumber: 0,
+        versionString: response.firmwareVersion ?? '',
+      ),
     );
-    return FirmwareVersionResult(_parser.parseFirmwareInfo(response.payload));
   }
 
   /// Retrieves battery level information.
   Future<BatteryLevelResult> getBatteryLevel() async {
-    final response = await _client.sendCommand(
-      productId: 0,
-      op: OperationCodes.read,
-      commandId: CommonCommandIds.readBattery,
+    final response = await _client.deviceInfo();
+    return BatteryLevelResult(
+      BatteryInfo(
+        level: response.batterySoc ?? 0,
+        voltage: ((response.batteryVoltage ?? 0) * 100).round(),
+      ),
     );
-    return BatteryLevelResult(_parser.parseBatteryInfo(response.payload));
   }
 
   /// Sets the device time using a shared common payload contract.
   Future<GenericCommandResult> setTime(DateTime time) async {
     final response = await _client.sendCommand(
-      productId: 0,
+      productId: ProductIds.aunkurUcp1,
       op: OperationCodes.write,
+      commandClass: CommandClasses.system,
       commandId: CommonCommandIds.setTime,
-      payload: CommonPayloads.setTime(time),
+      payload: TlvBuilder()
+          .addUint64BE(
+            TlvTypes.epochU64,
+            time.toUtc().millisecondsSinceEpoch ~/ 1000,
+          )
+          .build(),
     );
-    return GenericCommandResult(response.payload, statusCode: response.statusCode);
+    return GenericCommandResult(
+      response.payload,
+      statusCode: response.statusCode,
+    );
   }
 
   /// Sends a custom command with raw payload.
@@ -74,12 +97,16 @@ class CommonCommands {
     Duration? timeout,
   }) async {
     final response = await _client.sendCommand(
-      productId: 0,
+      productId: ProductIds.aunkurUcp1,
       op: OperationCodes.action,
+      commandClass: CommandClasses.system,
       commandId: commandId,
       payload: payload,
       timeout: timeout,
     );
-    return GenericCommandResult(response.payload, statusCode: response.statusCode);
+    return GenericCommandResult(
+      response.payload,
+      statusCode: response.statusCode,
+    );
   }
 }

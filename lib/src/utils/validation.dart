@@ -21,10 +21,7 @@ class Validation {
   }
 
   /// Validates that a list is not null or empty.
-  static List<T> requireNonEmptyList<T>(
-    List<T>? list,
-    String fieldName,
-  ) {
+  static List<T> requireNonEmptyList<T>(List<T>? list, String fieldName) {
     if (list == null || list.isEmpty) {
       throw ArgumentError('$fieldName must not be null or empty');
     }

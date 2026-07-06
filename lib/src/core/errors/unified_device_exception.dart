@@ -4,11 +4,7 @@ class UnifiedDeviceException implements Exception {
   final int? errorCode;
   final StackTrace? stackTrace;
 
-  const UnifiedDeviceException(
-    this.message, {
-    this.errorCode,
-    this.stackTrace,
-  });
+  const UnifiedDeviceException(this.message, {this.errorCode, this.stackTrace});
 
   @override
   String toString() {

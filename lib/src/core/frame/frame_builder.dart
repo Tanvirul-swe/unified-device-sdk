@@ -1,148 +1,161 @@
-import 'device_frame.dart';
 import '../bytes/endian_utils.dart';
 import '../crc/crc16_ccitt.dart';
+import '../../protocol/constants/command_classes.dart';
+import '../../protocol/constants/profile_ids.dart';
 import '../../protocol/constants/protocol_constants.dart';
+import '../../protocol/constants/ucp_addresses.dart';
+import '../../protocol/models/tlv.dart';
+import '../../protocol/payloads/tlv_builder.dart';
+import 'device_frame.dart';
 
-/// Builds raw byte frames ready for BLE transmission.
-///
-/// Correct wire format:
-///
-/// SOF(1)
-/// VER(1)
-/// PRODUCT(1)
-/// ADDR(1)
-/// OP(1)
-/// CMD(1)
-/// SEQ(1)
-/// FLAGS(1)
-/// LEN_H(1)
-/// LEN_L(1)
-/// PAYLOAD(n)
-/// CRC_H(1)
-/// CRC_L(1)
-/// EOF(1)
-///
-/// Empty payload frame size:
-/// 10-byte header + 0 payload + 2-byte CRC + 1-byte EOF = 13 bytes
-///
-/// CRC range:
-/// VER through PAYLOAD
-/// That means exclude SOF, CRC, EOF.
-class FrameBuilder {
+/// Builds raw bytes for the official UCP frame layout.
+class UcpFrameBuilder {
   final int sof;
   final int eof;
   final Crc16Ccitt crc;
 
-  /// Default: 1, meaning CRC starts from VER.
-  final int crcRangeStart;
-
-  /// If null, CRC ends at last payload byte.
-  final int? crcRangeEnd;
-
-  FrameBuilder({
+  UcpFrameBuilder({
     this.sof = ProtocolConstants.sof,
     this.eof = ProtocolConstants.eof,
     Crc16Ccitt? crc,
-    this.crcRangeStart = 1,
-    this.crcRangeEnd,
-  }) : crc = crc ?? Crc16Ccitt.standard();
+  }) : crc = crc ?? Crc16Ccitt.ccittFalse();
 
   List<int> build({
     required int version,
     required int productId,
-    required int address,
+    int profileId = ProfileIds.defaultProfile,
+    int? address,
+    int? sourceAddress,
+    int? destinationAddress,
     required int op,
+    int commandClass = CommandClasses.system,
     required int commandId,
     required int sequence,
     required int flags,
     List<int> payload = const [],
+    List<Tlv> tlvs = const [],
   }) {
     _validateUint8(version, 'version');
-
-    // As per document, PRODUCT is 1 byte.
     _validateUint8(productId, 'productId');
+    _validateUint8(profileId, 'profileId');
 
-    // As per document, ADDR is 1 byte.
-    _validateUint8(address, 'address');
+    final resolvedSource = sourceAddress ?? UcpAddresses.defaultSource;
+    final resolvedDestination =
+        destinationAddress ?? address ?? UcpAddresses.defaultDestination;
+    _validateUint8(resolvedSource, 'sourceAddress');
+    _validateUint8(resolvedDestination, 'destinationAddress');
 
     _validateUint8(op, 'op');
+    _validateUint8(commandClass, 'commandClass');
     _validateUint8(commandId, 'commandId');
-    _validateUint8(sequence, 'sequence');
+    _validateUint16(sequence, 'sequence');
     _validateUint8(flags, 'flags');
-    _validatePayload(payload);
 
-    final payloadLength = payload.length;
+    final payloadBytes = _resolvePayload(payload: payload, tlvs: tlvs);
+    _validatePayload(payloadBytes);
 
-    final frameBytes = <int>[
+    final frameWithoutCrc = <int>[
       sof,
       version,
       productId,
-      address,
+      profileId,
+      resolvedSource,
+      resolvedDestination,
       op,
+      commandClass,
       commandId,
-      sequence,
+      ...EndianUtils.uint16ToBytesBE(sequence),
       flags,
-      ...EndianUtils.uint16ToBytesBE(payloadLength),
-      ...payload,
+      ...EndianUtils.uint16ToBytesBE(payloadBytes.length),
+      ...payloadBytes,
     ];
 
-    // CRC from VER through PAYLOAD.
-    // frameBytes currently contains SOF + header + payload only.
-    // sublist(1, frameBytes.length) = VER through PAYLOAD.
-    final crcInputEnd = crcRangeEnd ?? frameBytes.length;
-    final crcInput = frameBytes.sublist(crcRangeStart, crcInputEnd);
-    final crcBytes = crc.computeBytesBE(crcInput);
+    final crcBytes = crc.computeBytesBE(
+      frameWithoutCrc.sublist(ProtocolConstants.versionOffset),
+    );
 
-    frameBytes.addAll(crcBytes);
-    frameBytes.add(eof);
-
-    return frameBytes;
+    return <int>[...frameWithoutCrc, ...crcBytes, eof];
   }
 
-  List<int> buildFromFrame(DeviceFrame frame) {
+  List<int> buildFromFrame(UcpFrame frame) {
     return build(
       version: frame.version,
       productId: frame.productId,
-      address: frame.address,
+      profileId: frame.profileId,
+      sourceAddress: frame.sourceAddress,
+      destinationAddress: frame.destinationAddress,
       op: frame.op,
+      commandClass: frame.commandClass,
       commandId: frame.commandId,
       sequence: frame.sequence,
       flags: frame.flags,
       payload: frame.payload,
+      tlvs: frame.tlvs,
     );
   }
 
-  /// Header size:
-  /// SOF + VER + PRODUCT + ADDR + OP + CMD + SEQ + FLAGS + LEN_H + LEN_L
-  /// = 10 bytes
-  static int get headerSize => 10;
-
-  /// Trailer size:
-  /// CRC_H + CRC_L + EOF
-  /// = 3 bytes
-  static int get trailerSize => 3;
+  static List<int> _resolvePayload({
+    required List<int> payload,
+    required List<Tlv> tlvs,
+  }) {
+    if (payload.isNotEmpty && tlvs.isNotEmpty) {
+      final encodedTlvs = TlvBuilder.encode(tlvs);
+      if (!_listEquals(payload, encodedTlvs)) {
+        throw ArgumentError('payload bytes do not match encoded TLVs');
+      }
+      return payload;
+    }
+    if (tlvs.isNotEmpty) {
+      return TlvBuilder.encode(tlvs);
+    }
+    return payload;
+  }
 
   static void _validateUint8(int value, String name) {
-    if (value < 0 || value > 255) {
+    if (value < 0 || value > 0xFF) {
       throw ArgumentError('$name must be 0-255, but got $value');
     }
   }
 
-  static void _validatePayload(List<int> payload) {
-    if (payload.length > 65535) {
-      throw ArgumentError(
-        'payload length must not exceed 65535, but got ${payload.length}',
-      );
-    }
-
-    for (var i = 0; i < payload.length; i++) {
-      final byte = payload[i];
-
-      if (byte < 0 || byte > 255) {
-        throw ArgumentError(
-          'payload byte at index $i must be 0-255, but got $byte',
-        );
-      }
+  static void _validateUint16(int value, String name) {
+    if (value < 0 || value > 0xFFFF) {
+      throw ArgumentError('$name must be 0-65535, but got $value');
     }
   }
+
+  static void _validatePayload(List<int> payload) {
+    if (payload.length > ProtocolConstants.maxPayloadSize) {
+      throw ArgumentError(
+        'payload length must not exceed ${ProtocolConstants.maxPayloadSize}, '
+        'but got ${payload.length}',
+      );
+    }
+    for (var i = 0; i < payload.length; i++) {
+      _validateUint8(payload[i], 'payload[$i]');
+    }
+  }
+
+  static bool _listEquals(List<int> a, List<int> b) {
+    if (a.length != b.length) {
+      return false;
+    }
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+/// Backward-compatible alias class.
+class FrameBuilder extends UcpFrameBuilder {
+  FrameBuilder({
+    super.sof,
+    super.eof,
+    super.crc,
+    int crcRangeStart = 1,
+    int? crcRangeEnd,
+  }) : assert(crcRangeStart == 1 || crcRangeStart == 0),
+       assert(crcRangeEnd == null);
 }

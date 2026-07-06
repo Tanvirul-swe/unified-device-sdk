@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'ucp_session_manager.dart';
 import 'unified_device_client_config.dart';
 import 'unified_device_session.dart';
+import '../errors/protocol_exception.dart';
 import '../errors/transport_exception.dart';
 import '../errors/unified_device_exception.dart';
 import '../frame/device_frame.dart';
@@ -15,45 +17,78 @@ import '../transport/connection_state.dart';
 import '../transport/device_transport.dart';
 import '../transport/discovered_device.dart';
 import '../../protocol/commands/command_options.dart';
+import '../../protocol/constants/command_classes.dart';
+import '../../protocol/constants/command_ids.dart';
+import '../../protocol/constants/operation_codes.dart';
+import '../../protocol/constants/product_ids.dart';
+import '../../protocol/constants/profile_ids.dart';
 import '../../protocol/constants/protocol_constants.dart';
+import '../../protocol/constants/tlv_types.dart';
+import '../../protocol/constants/ucp_addresses.dart';
+import '../../protocol/models/ucp_device_info.dart';
+import '../../protocol/models/ucp_last_report.dart';
+import '../../protocol/models/ucp_moisture_sample.dart';
+import '../../protocol/models/ucp_packet_trace.dart';
+import '../../protocol/models/ucp_time_snapshot.dart';
+import '../../protocol/parsers/common_response_parser.dart';
+import '../../protocol/payloads/tlv_builder.dart';
 
-/// Generic client for discovery, connection, and frame-based command exchange.
+/// Generic client for discovery, connection, and official UCP command exchange.
 class UnifiedDeviceClient {
   final UnifiedDeviceClientConfig _config;
   final DeviceTransport _transport;
   final FrameBuilder _frameBuilder;
   final FrameBuffer _frameBuffer;
-  final ResponseManager _responseManager;
+  final UcpResponseManager _responseManager;
+  final UcpSessionManager _sessionManager;
+  final CommonResponseParser _responseParser = const CommonResponseParser();
 
-  StreamSubscription<DeviceConnectionState>? _connectionSubscription;
-
-  UnifiedDeviceSession? _currentSession;
   bool _isDisposed = false;
 
   /// Creates a client from an explicit configuration.
-  UnifiedDeviceClient(this._config)
-      : _transport = _config.transport,
-        _frameBuilder = FrameBuilder(
-          sof: _config.sofDelimiter,
-          eof: _config.eofDelimiter,
-        ),
-        _frameBuffer = FrameBuffer(
-          sofDelimiter: _config.sofDelimiter,
-        ),
-        _responseManager = ResponseManager(
-          transport: _config.transport,
-          defaultTimeout: _config.defaultTimeout,
-          frameBuilder: FrameBuilder(
-            sof: _config.sofDelimiter,
-            eof: _config.eofDelimiter,
-          ),
-          frameBuffer: FrameBuffer(
-            sofDelimiter: _config.sofDelimiter,
-          ),
-          protocolVersion: _config.protocolVersion,
-        ) {
-    _bindConnectionState();
+  factory UnifiedDeviceClient(UnifiedDeviceClientConfig config) {
+    final frameBuilder = FrameBuilder(
+      sof: config.sofDelimiter,
+      eof: config.eofDelimiter,
+    );
+    final frameBuffer = FrameBuffer(sofDelimiter: config.sofDelimiter);
+    final responseManager = UcpResponseManager(
+      transport: config.transport,
+      defaultTimeout: config.defaultTimeout,
+      frameBuilder: FrameBuilder(
+        sof: config.sofDelimiter,
+        eof: config.eofDelimiter,
+      ),
+      frameBuffer: FrameBuffer(sofDelimiter: config.sofDelimiter),
+      protocolVersion: config.protocolVersion,
+    );
+
+    return UnifiedDeviceClient._(
+      config: config,
+      transport: config.transport,
+      frameBuilder: frameBuilder,
+      frameBuffer: frameBuffer,
+      responseManager: responseManager,
+      sessionManager: UcpSessionManager(
+        transport: config.transport,
+        responseManager: responseManager,
+      ),
+    );
   }
+
+  UnifiedDeviceClient._({
+    required UnifiedDeviceClientConfig config,
+    required DeviceTransport transport,
+    required FrameBuilder frameBuilder,
+    required FrameBuffer frameBuffer,
+    required UcpResponseManager responseManager,
+    required UcpSessionManager sessionManager,
+  }) : _config = config,
+       _transport = transport,
+       _frameBuilder = frameBuilder,
+       _frameBuffer = frameBuffer,
+       _responseManager = responseManager,
+       _sessionManager = sessionManager;
 
   /// Creates a client with a generic BLE transport by default.
   factory UnifiedDeviceClient.generic({
@@ -80,72 +115,38 @@ class UnifiedDeviceClient {
     );
   }
 
-  /// Underlying transport used by the client.
   DeviceTransport get transport => _transport;
-
-  /// Underlying frame builder used by the client.
   FrameBuilder get frameBuilder => _frameBuilder;
-
-  /// Underlying frame buffer configuration used by the client.
   FrameBuffer get frameBuffer => _frameBuffer;
+  UcpResponseManager get responseManager => _responseManager;
+  UcpSessionManager get sessionManager => _sessionManager;
+  UnifiedDeviceSession? get currentSession => _sessionManager.currentSession;
 
-  /// Current session, when connected.
-  UnifiedDeviceSession? get currentSession => _currentSession;
-
-  /// Whether the client is connected.
-  bool get isConnected =>
-      _currentSession != null &&
-      _currentSession!.state == DeviceConnectionState.connected;
-
-  /// Whether the transport is currently scanning.
+  bool get isConnected => currentSession != null;
   bool get isScanning => _transport.isScanning;
+  bool get isSessionActive => _sessionManager.isSessionActive;
 
-  /// Stream of discovered devices.
-  Stream<DiscoveredDevice> get discoveredDevices => _transport.discoveredDevices;
-
-  /// Stream of connection state updates.
-  Stream<DeviceConnectionState> get connectionState => _transport.connectionState;
-
-  /// Stream of generic EVENT frames.
+  Stream<DiscoveredDevice> get discoveredDevices =>
+      _transport.discoveredDevices;
+  Stream<DeviceConnectionState> get connectionState => _sessionManager.states;
   Stream<DeviceEvent> get events => _responseManager.events;
-
-  /// Stream of parsed inbound frames.
   Stream<DeviceFrame> get frames => _responseManager.frames;
+  Stream<DeviceResponse> get dataResponses => _responseManager.dataResponses;
+  Stream<DeviceFrame> get streamFrames => _responseManager.streamFrames;
+  Stream<UcpPacketTrace> get packetTraces => _responseManager.packetTraces;
 
-  /// Legacy alias retained for existing call sites.
+  Stream<UcpMoistureSample> get moistureSamples => streamFrames
+      .where(
+        (frame) =>
+            frame.commandClass == CommandClasses.moisture &&
+            frame.commandId == MoistureCommandIds.moistGetOn,
+      )
+      .map(_responseParser.parseMoistureSample);
+
+  /// Legacy aliases retained for existing call sites.
   Stream<DiscoveredDevice> get onDeviceDiscovered => discoveredDevices;
-
-  /// Legacy alias retained for existing call sites.
   Stream<DeviceConnectionState> get onConnectionStateChanged => connectionState;
-
-  /// Legacy alias retained for existing call sites.
   Stream<DeviceEvent> get onDeviceEvent => events;
-
-  void _bindConnectionState() {
-    _connectionSubscription = _transport.connectionState.listen(
-      (state) {
-        switch (state) {
-          case DeviceConnectionState.connected:
-            if (_transport.connectedDeviceId != null) {
-              _currentSession = UnifiedDeviceSession(
-                deviceId: _transport.connectedDeviceId!,
-                state: DeviceConnectionState.connected,
-              );
-            }
-            break;
-          case DeviceConnectionState.disconnected:
-          case DeviceConnectionState.connectionLost:
-            _currentSession = null;
-            break;
-          default:
-            if (_currentSession != null) {
-              _currentSession!.state = state;
-            }
-            break;
-        }
-      },
-    );
-  }
 
   Future<void> startScan() async {
     _throwIfDisposed();
@@ -160,11 +161,171 @@ class UnifiedDeviceClient {
   Future<void> connect(DiscoveredDevice device) async {
     _throwIfDisposed();
     await _transport.connect(device);
+    await Future<void>.delayed(Duration.zero);
+    await _sessionManager.bootstrap();
+    await _sessionManager.waitUntilSessionActive();
   }
 
   Future<void> disconnect() async {
     _throwIfDisposed();
+    if (isSessionActive) {
+      await _sessionManager.closeSession();
+      return;
+    }
     await _transport.disconnect();
+  }
+
+  Future<DeviceResponse> btTransportOpen() {
+    _throwIfDisposed();
+    _throwIfNotTransportReady();
+    return _sessionManager.openTransport();
+  }
+
+  Future<DeviceResponse> sessionOpenRtcSync({DateTime? now}) {
+    _throwIfDisposed();
+    _throwIfNotTransportReady();
+    return _sessionManager.openRtcSession(now: now);
+  }
+
+  Future<void> sessionClose() async {
+    _throwIfDisposed();
+    await _sessionManager.closeSession();
+  }
+
+  Future<UcpDeviceInfo> deviceInfo({Duration? timeout}) async {
+    final response = await sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.system,
+      commandId: SystemCommandIds.deviceInfo,
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+    return _responseParser.parseUcpDeviceInfo(response);
+  }
+
+  Future<UcpTimeSnapshot> timeRead({Duration? timeout}) async {
+    final response = await sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.system,
+      commandId: SystemCommandIds.time,
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+    return _responseParser.parseUcpTime(response);
+  }
+
+  Future<DeviceResponse> startTest({
+    required String agentId,
+    required String farmerId,
+    required String fieldIndex,
+    required String fieldTestIndex,
+    Duration? timeout,
+  }) async {
+    final response = await sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.measurement,
+      commandId: MeasurementCommandIds.startTest,
+      payload: TlvBuilder()
+          .addUtf8(TlvTypes.agentId, agentId)
+          .addUtf8(TlvTypes.farmerId, farmerId)
+          .addUtf8(TlvTypes.fieldIndex, fieldIndex)
+          .addUtf8(TlvTypes.fieldTestIndex, fieldTestIndex)
+          .build(),
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: false),
+    );
+    _sessionManager.markMeasurementActive(true);
+    return response;
+  }
+
+  Future<UcpLastReport> lastReport({Duration? timeout}) async {
+    final response = await sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.report,
+      commandId: ReportCommandIds.lastReport,
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+    _sessionManager.markMeasurementActive(false);
+    return _responseParser.parseUcpLastReport(response);
+  }
+
+  Future<DeviceResponse> moistGetOn({Duration? timeout}) async {
+    final response = await sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.moisture,
+      commandId: MoistureCommandIds.moistGetOn,
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: false),
+    );
+    _sessionManager.markStreamActive(true);
+    return response;
+  }
+
+  Future<DeviceResponse> moistGetOff({Duration? timeout}) async {
+    final response = await sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.moisture,
+      commandId: MoistureCommandIds.moistGetOff,
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: false),
+    );
+    _sessionManager.markStreamActive(false);
+    return response;
+  }
+
+  Future<DeviceResponse> font(String language, {Duration? timeout}) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.ui,
+      commandId: UiCommandIds.font,
+      payload: TlvBuilder().addUtf8(TlvTypes.textUtf8, language).build(),
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+  }
+
+  Future<DeviceResponse> cdn(String name, {Duration? timeout}) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.connectivity,
+      commandId: ConnectivityCommandIds.cdn,
+      payload: TlvBuilder().addUtf8(TlvTypes.cdnName, name).build(),
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
   }
 
   /// Sends a generic command and waits according to [options].
@@ -173,7 +334,11 @@ class UnifiedDeviceClient {
     required int op,
     required int commandId,
     List<int> payload = const [],
-    int address = 0,
+    int profileId = ProfileIds.defaultProfile,
+    int sourceAddress = UcpAddresses.defaultSource,
+    int address = UcpAddresses.defaultDestination,
+    int? destinationAddress,
+    int commandClass = CommandClasses.system,
     int flags = 0,
     CommandOptions options = const CommandOptions(),
     Duration? timeout,
@@ -184,39 +349,49 @@ class UnifiedDeviceClient {
       op: op,
       commandId: commandId,
       payload: payload,
+      profileId: profileId,
+      sourceAddress: sourceAddress,
       address: address,
+      destinationAddress: destinationAddress,
+      commandClass: commandClass,
       flags: flags,
     );
     _throwIfNotConnected();
+    _throwIfCommandBlocked(commandClass, commandId);
 
     return _responseManager.sendCommand(
       commandId: commandId,
       productId: productId,
-      address: address,
+      profileId: profileId,
+      sourceAddress: sourceAddress,
+      destinationAddress: destinationAddress ?? address,
       op: op,
+      commandClass: commandClass,
       version: _config.protocolVersion,
       payload: payload,
       flags: flags,
       options: timeout == null
           ? options
-          : options.copyWith(
-              ackTimeout: timeout,
-              dataTimeout: timeout,
-            ),
+          : options.copyWith(ackTimeout: timeout, dataTimeout: timeout),
     );
   }
 
-  /// Sends a prebuilt frame through the generic manager pipeline.
   Future<void> sendFrame(DeviceFrame frame) async {
     _throwIfDisposed();
     _throwIfNotConnected();
+    _throwIfCommandBlocked(frame.commandClass, frame.commandId);
     await _responseManager.sendFrame(frame);
   }
 
-  /// Sends raw bytes directly through the transport.
   Future<void> sendRawData(List<int> data) async {
     _throwIfDisposed();
     _throwIfNotConnected();
+    if (_sessionManager.state.index < DeviceConnectionState.mtuReady.index) {
+      throw const TransportException(
+        'Transport is not ready for raw writes',
+        errorType: TransportErrorType.writeFailed,
+      );
+    }
     await _transport.write(data);
   }
 
@@ -226,10 +401,9 @@ class UnifiedDeviceClient {
     }
     _isDisposed = true;
 
-    await _connectionSubscription?.cancel();
+    await _sessionManager.dispose();
     _responseManager.dispose();
     await _transport.dispose();
-    _currentSession = null;
   }
 
   void _throwIfDisposed() {
@@ -244,17 +418,60 @@ class UnifiedDeviceClient {
     }
   }
 
+  void _throwIfNotTransportReady() {
+    final state = _sessionManager.state;
+    if (state != DeviceConnectionState.connected &&
+        state != DeviceConnectionState.servicesDiscovered &&
+        state != DeviceConnectionState.notifySubscribed &&
+        state != DeviceConnectionState.mtuReady &&
+        state != DeviceConnectionState.transportReady &&
+        state != DeviceConnectionState.sessionActive &&
+        state != DeviceConnectionState.measurementActive &&
+        state != DeviceConnectionState.streamActive &&
+        state != DeviceConnectionState.safeDisconnectPending) {
+      throw const TransportException(
+        'BLE transport is not ready',
+        errorType: TransportErrorType.connectionFailed,
+      );
+    }
+  }
+
+  void _throwIfCommandBlocked(int commandClass, int commandId) {
+    if (isSessionActive || _isPreSessionCommand(commandClass, commandId)) {
+      return;
+    }
+    throw const ProtocolException(
+      'Command is blocked until sessionActive',
+      protocolErrorType: ProtocolErrorType.invalidDeviceState,
+    );
+  }
+
+  bool _isPreSessionCommand(int commandClass, int commandId) {
+    return commandClass == CommandClasses.session &&
+        (commandId == SessionCommandIds.btTransportOpen ||
+            commandId == SessionCommandIds.sessionOpenRtcSync ||
+            commandId == SessionCommandIds.sessionClose ||
+            commandId == SessionCommandIds.heartbeat);
+  }
+
   void _validateCommandInput({
     required int productId,
     required int op,
     required int commandId,
     required List<int> payload,
+    required int profileId,
+    required int sourceAddress,
     required int address,
+    int? destinationAddress,
+    required int commandClass,
     required int flags,
   }) {
-    _validateUint16(productId, 'productId');
-    _validateUint32(address, 'address');
+    _validateUint8(productId, 'productId');
+    _validateUint8(profileId, 'profileId');
+    _validateUint8(sourceAddress, 'sourceAddress');
+    _validateUint8(destinationAddress ?? address, 'destinationAddress');
     _validateUint8(op, 'op');
+    _validateUint8(commandClass, 'commandClass');
     _validateUint8(commandId, 'commandId');
     _validateUint8(flags, 'flags');
     for (var i = 0; i < payload.length; i++) {
@@ -265,18 +482,6 @@ class UnifiedDeviceClient {
   void _validateUint8(int value, String name) {
     if (value < 0 || value > 255) {
       throw ArgumentError('$name must be 0-255, but got $value');
-    }
-  }
-
-  void _validateUint16(int value, String name) {
-    if (value < 0 || value > 65535) {
-      throw ArgumentError('$name must be 0-65535, but got $value');
-    }
-  }
-
-  void _validateUint32(int value, String name) {
-    if (value < 0 || value > 4294967295) {
-      throw ArgumentError('$name must be 0-4294967295, but got $value');
     }
   }
 }

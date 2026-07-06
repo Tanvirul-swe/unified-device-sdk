@@ -1,108 +1,59 @@
 import '../bytes/endian_utils.dart';
+import '../../protocol/constants/command_classes.dart';
 import '../../protocol/constants/operation_codes.dart';
+import '../../protocol/constants/profile_ids.dart';
+import '../../protocol/constants/protocol_constants.dart';
+import '../../protocol/constants/ucp_addresses.dart';
+import '../../protocol/models/tlv.dart';
+import '../../protocol/payloads/tlv_builder.dart';
 
-/// Represents a complete device communication frame (logical content).
-///
-/// Frame wire format (SOF and EOF are protocol-level delimiters, not stored here):
-///   VER(1) PRODUCT(2) ADDR(4) OP(1) CMD(1) SEQ(1) FLAGS(1) LEN_H(1) LEN_L(1) PAYLOAD(n) CRC_H(1) CRC_L(1)
-///
-/// This class holds the logical fields. The [payloadLength] is computed from
-/// the payload list length. Helper booleans ([isAck], [isNack], etc.) provide
-/// convenient access to the operation type.
-///
-/// All fields are validated on construction. The payload list is defensively
-/// copied to prevent external mutation.
-class DeviceFrame {
-  /// Protocol version byte (0-255).
+/// Represents a complete official UCP frame.
+class UcpFrame {
   final int version;
-
-  /// Product identifier (0-65535).
   final int productId;
-
-  /// Device address as a 32-bit unsigned integer (0-4294967295).
-  /// Typically a BLE MAC address or custom device ID.
-  final int address;
-
-  /// Operation code — determines the type of operation (READ, WRITE, etc.).
-  /// See [OperationCodes] for valid values.
+  final int profileId;
+  final int sourceAddress;
+  final int destinationAddress;
   final int op;
-
-  /// Command identifier — interpreted in the context of [op].
-  /// For example, OP=READ + CMD=readDeviceInfo means "read device info".
+  final int commandClass;
   final int commandId;
-
-  /// Sequence number for request-response matching (1-255 by default).
   final int sequence;
-
-  /// Frame flags bitfield — see [ProtocolFlags] for bit definitions.
   final int flags;
-
-  /// The payload data bytes (0-65535 bytes, each 0-255).
   final List<int> payload;
-
-  /// CRC-16 checksum of the frame (0-65535).
+  final List<Tlv> tlvs;
   final int crc;
-
-  /// The minimum valid sequence number (inclusive).
   final int minSequence;
-
-  /// The maximum valid sequence number (inclusive).
   final int maxSequence;
 
-  // ---- Computed Properties ----
-
-  /// Length of the payload in bytes (computed from [payload]).
-  int get payloadLength => payload.length;
-
-  /// Whether this frame is an ACK (acknowledgment) operation.
-  bool get isAck => op == OperationCodes.ack;
-
-  /// Whether this frame is a NACK (negative acknowledgment) operation.
-  bool get isNack => op == OperationCodes.nack;
-
-  /// Whether this frame is an EVENT (asynchronous notification) operation.
-  bool get isEvent => op == OperationCodes.event;
-
-  /// Whether this frame is a DATA (bulk transfer) operation.
-  bool get isData => op == OperationCodes.data;
-
-  /// Whether this frame is a READ operation.
-  bool get isRead => op == OperationCodes.read;
-
-  /// Whether this frame is a WRITE operation.
-  bool get isWrite => op == OperationCodes.write;
-
-  /// Whether this frame is an ACTION operation.
-  bool get isAction => op == OperationCodes.action;
-
-  /// Creates a [DeviceFrame] with the given fields.
-  ///
-  /// All one-byte fields are validated to be 0-255.
-  /// [productId] is validated to be 0-65535.
-  /// [address] is validated to be 0-4294967295.
-  /// [crc] is validated to be 0-65535.
-  /// [sequence] is validated to be within [minSequence]..[maxSequence].
-  /// [payload] is defensively copied; each byte must be 0-255.
-  /// Payload length must not exceed 65535.
-  ///
-  /// Throws [ArgumentError] if any validation fails.
-  DeviceFrame({
+  UcpFrame({
     required this.version,
     required this.productId,
-    required this.address,
+    this.profileId = ProfileIds.defaultProfile,
+    this.sourceAddress = UcpAddresses.defaultSource,
+    this.destinationAddress = UcpAddresses.defaultDestination,
     required this.op,
+    required this.commandClass,
     required this.commandId,
     required this.sequence,
     required this.flags,
-    required List<int> payload,
+    List<int> payload = const [],
+    List<Tlv> tlvs = const [],
     required this.crc,
-    this.minSequence = 1,
-    this.maxSequence = 255,
-  }) : payload = List.unmodifiable(payload) {
+    this.minSequence = ProtocolConstants.initialSequenceNumber,
+    this.maxSequence = ProtocolConstants.maxSequenceNumber,
+  }) : payload = List<int>.unmodifiable(
+         _resolvePayload(payload: payload, tlvs: tlvs),
+       ),
+       tlvs = List<Tlv>.unmodifiable(
+         _resolveTlvs(payload: payload, tlvs: tlvs),
+       ) {
     _validateUint8(version, 'version');
-    _validateUint16(productId, 'productId');
-    _validateUint32(address, 'address');
+    _validateUint8(productId, 'productId');
+    _validateUint8(profileId, 'profileId');
+    _validateUint8(sourceAddress, 'sourceAddress');
+    _validateUint8(destinationAddress, 'destinationAddress');
     _validateUint8(op, 'op');
+    _validateUint8(commandClass, 'commandClass');
     _validateUint8(commandId, 'commandId');
     _validateSequence(sequence, minSequence, maxSequence);
     _validateUint8(flags, 'flags');
@@ -110,71 +61,124 @@ class DeviceFrame {
     _validateUint16(crc, 'crc');
   }
 
-  /// Creates a copy of this frame with the given fields replaced.
-  DeviceFrame copyWith({
+  int get payloadLength => payload.length;
+
+  int get address => destinationAddress;
+
+  bool get isRequest => op == OperationCodes.req;
+  bool get isAck => op == OperationCodes.ack;
+  bool get isNack => op == OperationCodes.nack;
+  bool get isData => op == OperationCodes.data;
+  bool get isEvent => op == OperationCodes.event;
+  bool get isStream => op == OperationCodes.stream;
+  bool get isHeartbeat => op == OperationCodes.heartbeat;
+
+  // Legacy operation aliases retained for older response logic.
+  bool get isRead => isRequest;
+  bool get isWrite => isRequest;
+  bool get isAction => isRequest;
+
+  UcpFrame copyWith({
     int? version,
     int? productId,
-    int? address,
+    int? profileId,
+    int? sourceAddress,
+    int? destinationAddress,
     int? op,
+    int? commandClass,
     int? commandId,
     int? sequence,
     int? flags,
     List<int>? payload,
+    List<Tlv>? tlvs,
     int? crc,
     int? minSequence,
     int? maxSequence,
   }) {
-    return DeviceFrame(
+    return UcpFrame(
       version: version ?? this.version,
       productId: productId ?? this.productId,
-      address: address ?? this.address,
+      profileId: profileId ?? this.profileId,
+      sourceAddress: sourceAddress ?? this.sourceAddress,
+      destinationAddress: destinationAddress ?? this.destinationAddress,
       op: op ?? this.op,
+      commandClass: commandClass ?? this.commandClass,
       commandId: commandId ?? this.commandId,
       sequence: sequence ?? this.sequence,
       flags: flags ?? this.flags,
       payload: payload ?? this.payload,
+      tlvs: tlvs ?? this.tlvs,
       crc: crc ?? this.crc,
       minSequence: minSequence ?? this.minSequence,
       maxSequence: maxSequence ?? this.maxSequence,
     );
   }
 
+  String toHexString() {
+    final bytes = <int>[
+      version,
+      productId,
+      profileId,
+      sourceAddress,
+      destinationAddress,
+      op,
+      commandClass,
+      commandId,
+      ...EndianUtils.uint16ToBytesBE(sequence),
+      flags,
+      ...EndianUtils.uint16ToBytesBE(payloadLength),
+      ...payload,
+      ...EndianUtils.uint16ToBytesBE(crc),
+    ];
+    return EndianUtils.toHexString(bytes);
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is DeviceFrame &&
+      other is UcpFrame &&
           runtimeType == other.runtimeType &&
           version == other.version &&
           productId == other.productId &&
-          address == other.address &&
+          profileId == other.profileId &&
+          sourceAddress == other.sourceAddress &&
+          destinationAddress == other.destinationAddress &&
           op == other.op &&
+          commandClass == other.commandClass &&
           commandId == other.commandId &&
           sequence == other.sequence &&
           flags == other.flags &&
           _listEquals(payload, other.payload) &&
+          _listEquals(tlvs, other.tlvs) &&
           crc == other.crc;
 
   @override
   int get hashCode => Object.hash(
-        version,
-        productId,
-        address,
-        op,
-        commandId,
-        sequence,
-        flags,
-        Object.hashAll(payload),
-        crc,
-      );
+    version,
+    productId,
+    profileId,
+    sourceAddress,
+    destinationAddress,
+    op,
+    commandClass,
+    commandId,
+    sequence,
+    flags,
+    Object.hashAll(payload),
+    Object.hashAll(tlvs),
+    crc,
+  );
 
-  /// Returns a human-readable summary of the frame.
   @override
   String toString() {
-    return 'DeviceFrame('
+    return 'UcpFrame('
         'ver: $version, '
-        'product: 0x${productId.toRadixString(16).toUpperCase().padLeft(4, '0')}, '
-        'addr: 0x${address.toRadixString(16).toUpperCase().padLeft(8, '0')}, '
+        'product: 0x${productId.toRadixString(16).toUpperCase().padLeft(2, '0')}, '
+        'profile: 0x${profileId.toRadixString(16).toUpperCase().padLeft(2, '0')}, '
+        'src: 0x${sourceAddress.toRadixString(16).toUpperCase().padLeft(2, '0')}, '
+        'dst: 0x${destinationAddress.toRadixString(16).toUpperCase().padLeft(2, '0')}, '
         'op: 0x${op.toRadixString(16).toUpperCase().padLeft(2, '0')}, '
+        'class: 0x${commandClass.toRadixString(16).toUpperCase().padLeft(2, '0')}, '
         'cmd: 0x${commandId.toRadixString(16).toUpperCase().padLeft(2, '0')}, '
         'seq: $sequence, '
         'flags: 0x${flags.toRadixString(16).toUpperCase().padLeft(2, '0')}, '
@@ -182,80 +186,129 @@ class DeviceFrame {
         'crc: 0x${crc.toRadixString(16).toUpperCase().padLeft(4, '0')})';
   }
 
-  /// Returns a debug hex dump of the frame's logical content.
-  ///
-  /// Format: space-separated uppercase hex bytes representing the frame
-  /// in wire order: VER PRODUCT ADDR OP CMD SEQ FLAGS LEN PAYLOAD CRC.
-  String toHexString() {
-    final bytes = <int>[
-      version,
-      ...EndianUtils.uint16ToBytesBE(productId),
-      ...EndianUtils.uint32ToBytesBE(address),
-      op,
-      commandId,
-      sequence,
-      flags,
-      ...EndianUtils.uint16ToBytesBE(payload.length),
-      ...payload,
-      ...EndianUtils.uint16ToBytesBE(crc),
-    ];
-    return EndianUtils.toHexString(bytes);
+  static List<int> _resolvePayload({
+    required List<int> payload,
+    required List<Tlv> tlvs,
+  }) {
+    if (payload.isEmpty) {
+      return TlvBuilder.encode(tlvs);
+    }
+
+    if (tlvs.isNotEmpty) {
+      final encodedTlvs = TlvBuilder.encode(tlvs);
+      if (!_listEquals(payload, encodedTlvs)) {
+        throw ArgumentError('payload bytes do not match encoded TLVs');
+      }
+    }
+
+    return payload;
   }
 
-  // ---- Validation ----
+  static List<Tlv> _resolveTlvs({
+    required List<int> payload,
+    required List<Tlv> tlvs,
+  }) {
+    if (tlvs.isEmpty) {
+      return const <Tlv>[];
+    }
+
+    if (payload.isNotEmpty) {
+      final encodedTlvs = TlvBuilder.encode(tlvs);
+      if (!_listEquals(payload, encodedTlvs)) {
+        throw ArgumentError('payload bytes do not match encoded TLVs');
+      }
+    }
+
+    return tlvs;
+  }
 
   static void _validateUint8(int value, String name) {
-    if (value < 0 || value > 255) {
-      throw ArgumentError(
-        '$name must be 0-255, but got $value',
-      );
+    if (value < 0 || value > 0xFF) {
+      throw ArgumentError('$name must be 0-255, but got $value');
     }
   }
 
   static void _validateUint16(int value, String name) {
-    if (value < 0 || value > 65535) {
-      throw ArgumentError(
-        '$name must be 0-65535, but got $value',
-      );
-    }
-  }
-
-  static void _validateUint32(int value, String name) {
-    if (value < 0 || value > 4294967295) {
-      throw ArgumentError(
-        '$name must be 0-4294967295, but got $value',
-      );
+    if (value < 0 || value > 0xFFFF) {
+      throw ArgumentError('$name must be 0-65535, but got $value');
     }
   }
 
   static void _validateSequence(int value, int min, int max) {
     if (value < min || value > max) {
-      throw ArgumentError(
-        'sequence must be $min-$max, but got $value',
-      );
+      throw ArgumentError('sequence must be $min-$max, but got $value');
     }
   }
 
   static void _validatePayload(List<int> payload) {
-    if (payload.length > 65535) {
+    if (payload.length > ProtocolConstants.maxPayloadSize) {
       throw ArgumentError(
-        'payload length must not exceed 65535, but got ${payload.length}',
+        'payload length must not exceed ${ProtocolConstants.maxPayloadSize}, '
+        'but got ${payload.length}',
       );
     }
     for (var i = 0; i < payload.length; i++) {
-      if (payload[i] < 0 || payload[i] > 255) {
-        throw ArgumentError(
-          'payload byte at index $i must be 0-255, but got ${payload[i]}',
-        );
-      }
+      _validateUint8(payload[i], 'payload[$i]');
     }
   }
 
-  static bool _listEquals(List<int> a, List<int> b) {
-    if (a.length != b.length) return false;
+  static bool _listEquals<T>(List<T> a, List<T> b) {
+    if (a.length != b.length) {
+      return false;
+    }
     for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
+      if (a[i] != b[i]) {
+        return false;
+      }
     }
     return true;
+  }
+}
+
+/// Backward-compatible wrapper over [UcpFrame].
+class DeviceFrame extends UcpFrame {
+  DeviceFrame({
+    required super.version,
+    required super.productId,
+    super.profileId = ProfileIds.defaultProfile,
+    int? address,
+    int? sourceAddress,
+    int? destinationAddress,
+    required super.op,
+    super.commandClass = CommandClasses.system,
+    required super.commandId,
+    required super.sequence,
+    required super.flags,
+    List<int> payload = const [],
+    List<Tlv> tlvs = const [],
+    required super.crc,
+    super.minSequence = ProtocolConstants.initialSequenceNumber,
+    super.maxSequence = ProtocolConstants.maxSequenceNumber,
+  }) : super(
+         sourceAddress: sourceAddress ?? UcpAddresses.defaultSource,
+         destinationAddress:
+             destinationAddress ?? address ?? UcpAddresses.defaultDestination,
+         payload: payload,
+         tlvs: tlvs,
+       );
+
+  factory DeviceFrame.fromUcpFrame(UcpFrame frame) {
+    return DeviceFrame(
+      version: frame.version,
+      productId: frame.productId,
+      profileId: frame.profileId,
+      sourceAddress: frame.sourceAddress,
+      destinationAddress: frame.destinationAddress,
+      op: frame.op,
+      commandClass: frame.commandClass,
+      commandId: frame.commandId,
+      sequence: frame.sequence,
+      flags: frame.flags,
+      payload: frame.payload,
+      tlvs: frame.tlvs,
+      crc: frame.crc,
+      minSequence: frame.minSequence,
+      maxSequence: frame.maxSequence,
+    );
   }
 }

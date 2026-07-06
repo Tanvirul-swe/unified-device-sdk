@@ -11,11 +11,7 @@ class MyApp extends StatelessWidget {
   final bool enablePlatformBootstrap;
   final UnifiedDevicePlatform? platform;
 
-  const MyApp({
-    super.key,
-    this.enablePlatformBootstrap = true,
-    this.platform,
-  });
+  const MyApp({super.key, this.enablePlatformBootstrap = true, this.platform});
 
   @override
   Widget build(BuildContext context) {

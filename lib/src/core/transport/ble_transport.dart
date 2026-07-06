@@ -154,6 +154,7 @@ class BleTransport implements DeviceTransport {
     _throwIfDisposed();
     await _platform.startScan();
     _isScanning = true;
+    _connectionStateController.add(DeviceConnectionState.scanning);
   }
 
   @override
@@ -161,11 +162,17 @@ class BleTransport implements DeviceTransport {
     _throwIfDisposed();
     await _platform.stopScan();
     _isScanning = false;
+    if (_currentConnectionState == DeviceConnectionState.disconnected) {
+      _connectionStateController.add(DeviceConnectionState.disconnected);
+    }
   }
 
   @override
   Future<void> connect(DiscoveredDevice device) async {
     _throwIfDisposed();
+    if (_isScanning) {
+      _isScanning = false;
+    }
     await _platform.connect(device.deviceId);
   }
 
