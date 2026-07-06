@@ -293,13 +293,15 @@ final class BleManager: NSObject {
     private func emitConnectionState(
         _ state: String,
         deviceId: String?,
-        message: String? = nil
+        message: String? = nil,
+        details: [String: Any]? = nil
     ) {
         connectionEventHandler.emit(
             NativeErrorMapper.connectionEvent(
                 state: state,
                 deviceId: deviceId,
-                message: message
+                message: message,
+                details: details
             )
         )
     }
@@ -366,6 +368,17 @@ final class BleManager: NSObject {
         pendingConnectResult?(nil)
         pendingConnectResult = nil
         emitConnectionState(BleConstants.stateReady, deviceId: peripheral.identifier.uuidString)
+
+        // Query the negotiated MTU and emit mtuReady state
+        let mtu = peripheral.maximumWriteValueLength(for: .withResponse)
+        let effectiveMtu = max(mtu, peripheral.maximumWriteValueLength(for: .withoutResponse))
+        let mtuValue = effectiveMtu > 0 ? effectiveMtu : 256
+        emitConnectionState(
+            BleConstants.stateMtuReady,
+            deviceId: peripheral.identifier.uuidString,
+            message: nil,
+            details: ["mtu": mtuValue]
+        )
     }
 
     private func handleDisconnect(

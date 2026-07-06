@@ -43,6 +43,11 @@ class FakeTransport implements DeviceTransport {
   String? get connectedDeviceId => _connectedDeviceId;
 
   @override
+  int get negotiatedMtu => _negotiatedMtu;
+
+  int _negotiatedMtu = 0;
+
+  @override
   Future<void> startScan() async {
     _isScanning = true;
   }

@@ -19,6 +19,7 @@ struct BleConstants {
     static let stateDisconnected = "disconnected"
     static let stateError = "error"
     static let stateConnectionLost = "connectionLost"
+    static let stateMtuReady = "mtuReady"
 
     static let bluetoothUnavailableError = "bluetooth_unavailable"
     static let bluetoothDisabledError = "bluetooth_disabled"

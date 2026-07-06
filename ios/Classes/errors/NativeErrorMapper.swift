@@ -53,7 +53,8 @@ struct NativeErrorMapper {
     static func connectionEvent(
         state: String,
         deviceId: String?,
-        message: String? = nil
+        message: String? = nil,
+        details: [String: Any]? = nil
     ) -> [String: Any] {
         var payload: [String: Any] = [
             "state": state,
@@ -62,6 +63,12 @@ struct NativeErrorMapper {
 
         if let message = message {
             payload["message"] = message
+        }
+
+        if let details = details {
+            for (key, value) in details {
+                payload[key] = value
+            }
         }
 
         return payload

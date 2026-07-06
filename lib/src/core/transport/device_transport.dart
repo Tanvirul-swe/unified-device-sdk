@@ -32,6 +32,9 @@ abstract class DeviceTransport {
   /// The device ID of the currently connected device, if any.
   String? get connectedDeviceId;
 
+  /// The negotiated BLE ATT MTU value, or 0 if not yet negotiated.
+  int get negotiatedMtu;
+
   /// Starts scanning for nearby devices.
   Future<void> startScan();
 

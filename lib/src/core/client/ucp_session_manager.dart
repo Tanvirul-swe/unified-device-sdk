@@ -14,6 +14,7 @@ import '../../protocol/constants/command_ids.dart';
 import '../../protocol/constants/operation_codes.dart';
 import '../../protocol/constants/product_ids.dart';
 import '../../protocol/constants/profile_ids.dart';
+import '../../protocol/constants/protocol_constants.dart';
 import '../../protocol/constants/tlv_types.dart';
 import '../../protocol/constants/ucp_addresses.dart';
 import '../../protocol/models/decoded_tlv.dart';
@@ -36,6 +37,12 @@ class UcpSessionManager {
   Completer<void>? _bootstrapCompleter;
   Completer<void>? _disconnectCompleter;
   bool _isDisposed = false;
+
+  // Heartbeat
+  Timer? _heartbeatTimer;
+  Timer? _heartbeatTimeoutTimer;
+  int _missedHeartbeats = 0;
+  static const int _maxMissedHeartbeats = 3;
 
   UcpSessionManager({
     required DeviceTransport transport,
@@ -211,6 +218,7 @@ class UcpSessionManager {
         break;
       case DeviceConnectionState.disconnected:
       case DeviceConnectionState.connectionLost:
+        _stopHeartbeat();
         _currentSession = null;
         _updateState(state);
         _disconnectCompleter?.complete();
@@ -261,6 +269,7 @@ class UcpSessionManager {
           ..safeDisconnectPending = false;
       }
       _updateState(DeviceConnectionState.sessionActive);
+      _startHeartbeat();
       completer.complete();
     } catch (error, stackTrace) {
       if (!completer.isCompleted) {
@@ -279,6 +288,9 @@ class UcpSessionManager {
     if (frame == null) {
       return;
     }
+
+    // Reset heartbeat on any incoming frame from device
+    _resetHeartbeatTimeout();
 
     if (frame.commandClass == CommandClasses.measurement &&
         frame.commandId == MeasurementCommandIds.startTest) {
@@ -315,6 +327,68 @@ class UcpSessionManager {
       }
     }
     return null;
+  }
+
+  void _startHeartbeat() {
+    _stopHeartbeat();
+    _missedHeartbeats = 0;
+    _heartbeatTimer = Timer.periodic(
+      ProtocolConstants.heartbeatInterval,
+      (_) => _sendHeartbeat(),
+    );
+  }
+
+  void _stopHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    _heartbeatTimeoutTimer?.cancel();
+    _heartbeatTimeoutTimer = null;
+    _missedHeartbeats = 0;
+  }
+
+  void _resetHeartbeatTimeout() {
+    _heartbeatTimeoutTimer?.cancel();
+    _heartbeatTimeoutTimer = null;
+    _missedHeartbeats = 0;
+  }
+
+  void _sendHeartbeat() {
+    if (!isSessionActive || _isDisposed) {
+      _stopHeartbeat();
+      return;
+    }
+    unawaited(_sendHeartbeatFrame());
+  }
+
+  Future<void> _sendHeartbeatFrame() async {
+    try {
+      await _responseManager.sendCommand(
+        productId: ProductIds.aunkurUcp1,
+        profileId: ProfileIds.defaultProfile,
+        sourceAddress: UcpAddresses.software,
+        destinationAddress: UcpAddresses.device,
+        op: OperationCodes.req,
+        commandClass: CommandClasses.session,
+        commandId: SessionCommandIds.heartbeat,
+        options: const CommandOptions(
+          waitForAck: true,
+          waitForData: false,
+          ackTimeout: ProtocolConstants.heartbeatTimeout,
+        ),
+      );
+      _missedHeartbeats = 0;
+    } on Object {
+      _missedHeartbeats++;
+      if (_missedHeartbeats >= _maxMissedHeartbeats) {
+        _onHeartbeatMissed();
+      }
+    }
+  }
+
+  void _onHeartbeatMissed() {
+    _stopHeartbeat();
+    _updateState(DeviceConnectionState.connectionLost);
+    unawaited(_transport.disconnect());
   }
 
   void _refreshOperationalState() {

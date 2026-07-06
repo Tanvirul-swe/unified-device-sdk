@@ -1006,8 +1006,8 @@ class BleManager(
             Log.d(TAG, "BLE connection ready device=$connectedDeviceId")
 
             try {
-                Log.d(TAG, "Requesting MTU of 512")
-                gatt.requestMtu(512)
+                Log.d(TAG, "Requesting MTU of 517")
+                gatt.requestMtu(517)
             } catch (e: SecurityException) {
                 Log.w(TAG, "Permission denied while requesting MTU", e)
             } catch (e: Exception) {
@@ -1025,6 +1025,13 @@ class BleManager(
                 "onMtuChanged device=${gatt.device?.address} mtu=$mtu status=$status " +
                     "(${describeGattStatus(status)})"
             )
+            val effectiveMtu = if (status == BluetoothGatt.GATT_SUCCESS) {
+                mtu
+            } else {
+                Log.w(TAG, "MTU request failed (status=$status), falling back to 256")
+                256
+            }
+            emitConnectionState("mtuReady", connectedDeviceId, details = mapOf("mtu" to effectiveMtu))
         }
 
         @Deprecated("Deprecated in Java")

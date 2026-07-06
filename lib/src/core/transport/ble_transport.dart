@@ -27,6 +27,7 @@ class BleTransport implements DeviceTransport {
   StreamSubscription<Map<String, dynamic>>? _connectionSubscription;
   StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
 
+  int _negotiatedMtu = 0;
   DeviceConnectionState _currentConnectionState =
       DeviceConnectionState.disconnected;
   String? _connectedDeviceId;
@@ -59,6 +60,9 @@ class BleTransport implements DeviceTransport {
 
   @override
   String? get connectedDeviceId => _connectedDeviceId;
+
+  @override
+  int get negotiatedMtu => _negotiatedMtu;
 
   void _bindPlatformStreams() {
     _scanSubscription = _platform.scanResults.listen(
@@ -101,6 +105,7 @@ class BleTransport implements DeviceTransport {
     final mapped = PlatformEventMapper.mapConnectionState(event);
     final nextState = _mapConnectionState(mapped['state'] as String);
     final deviceId = mapped['deviceId'] as String?;
+    final mtu = mapped['mtu'] as int?;
 
     _currentConnectionState = nextState;
     if (nextState == DeviceConnectionState.connected) {
@@ -108,6 +113,11 @@ class BleTransport implements DeviceTransport {
     } else if (nextState == DeviceConnectionState.disconnected ||
         nextState == DeviceConnectionState.connectionLost) {
       _connectedDeviceId = null;
+      _negotiatedMtu = 0;
+    }
+
+    if (mtu != null && mtu > 0) {
+      _negotiatedMtu = mtu;
     }
 
     _connectionStateController.add(nextState);
@@ -139,6 +149,8 @@ class BleTransport implements DeviceTransport {
       case 'connected':
       case 'ready':
         return DeviceConnectionState.connected;
+      case 'mtuReady':
+        return DeviceConnectionState.mtuReady;
       case 'disconnecting':
         return DeviceConnectionState.disconnecting;
       case 'connectionLost':

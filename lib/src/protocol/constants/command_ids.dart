@@ -47,6 +47,64 @@ class ConnectivityCommandIds {
   static const int cdn = 0x01;
 }
 
+class CalibrationCommandIds {
+  CalibrationCommandIds._();
+
+  /// Start the calibration process.
+  static const int calibrationStart = 0x01;
+
+  /// Get current calibration status.
+  static const int calibrationStatus = 0x02;
+
+  /// Apply calibration values.
+  static const int calibrationApply = 0x03;
+}
+
+class ConfigurationCommandIds {
+  ConfigurationCommandIds._();
+
+  /// Read a configuration parameter.
+  static const int configRead = 0x01;
+
+  /// Write a configuration parameter.
+  static const int configWrite = 0x02;
+
+  /// List all available configuration parameters.
+  static const int configList = 0x03;
+}
+
+class ReportHistoryCommandIds {
+  ReportHistoryCommandIds._();
+
+  /// Get a list of available report IDs.
+  static const int reportList = 0x01;
+
+  /// Get a specific historical report by ID.
+  static const int reportGet = 0x02;
+
+  /// Delete a specific historical report.
+  static const int reportDelete = 0x03;
+
+  /// Export report data.
+  static const int reportExport = 0x04;
+}
+
+class FileTransferCommandIds {
+  FileTransferCommandIds._();
+
+  /// Start a file transfer session.
+  static const int fileTransferStart = 0x01;
+
+  /// Transfer a chunk of file data.
+  static const int fileTransferChunk = 0x02;
+
+  /// End a file transfer session.
+  static const int fileTransferEnd = 0x03;
+
+  /// Get file transfer status.
+  static const int fileTransferStatus = 0x04;
+}
+
 class CommandIds {
   CommandIds._();
 
@@ -65,4 +123,18 @@ class CommandIds {
   static const int moistureGetOff = MoistureCommandIds.moistGetOff;
   static const int uiFont = UiCommandIds.font;
   static const int connectivityCdn = ConnectivityCommandIds.cdn;
+  static const int calibrationStart = CalibrationCommandIds.calibrationStart;
+  static const int calibrationStatus = CalibrationCommandIds.calibrationStatus;
+  static const int calibrationApply = CalibrationCommandIds.calibrationApply;
+  static const int configRead = ConfigurationCommandIds.configRead;
+  static const int configWrite = ConfigurationCommandIds.configWrite;
+  static const int configList = ConfigurationCommandIds.configList;
+  static const int reportList = ReportHistoryCommandIds.reportList;
+  static const int reportGet = ReportHistoryCommandIds.reportGet;
+  static const int reportDelete = ReportHistoryCommandIds.reportDelete;
+  static const int reportExport = ReportHistoryCommandIds.reportExport;
+  static const int fileTransferStart = FileTransferCommandIds.fileTransferStart;
+  static const int fileTransferChunk = FileTransferCommandIds.fileTransferChunk;
+  static const int fileTransferEnd = FileTransferCommandIds.fileTransferEnd;
+  static const int fileTransferStatus = FileTransferCommandIds.fileTransferStatus;
 }

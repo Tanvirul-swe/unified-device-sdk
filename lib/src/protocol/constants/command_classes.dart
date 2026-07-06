@@ -8,6 +8,9 @@ class CommandClasses {
   static const int moisture = 0x05;
   static const int ui = 0x06;
   static const int connectivity = 0x07;
+  static const int calibration = 0x08;
+  static const int configuration = 0x09;
+  static const int fileTransfer = 0x0A;
 
   static bool isValid(int value) => value >= 0x00 && value <= 0xFF;
 }

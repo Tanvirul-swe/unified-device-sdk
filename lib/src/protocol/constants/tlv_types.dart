@@ -58,6 +58,18 @@ class TlvTypes {
   static const int resultTempX100 = 0x65;
   static const int reportError = 0x66;
 
+  // ---- Extended TLV types for future commands ----
+  static const int sensorTypeU8 = 0x70;
+  static const int calData = 0x71;
+  static const int configKeyU16 = 0x72;
+  static const int configValue = 0x73;
+  static const int exportFormat = 0x74;
+  static const int fileName = 0x75;
+  static const int fileSizeU32 = 0x76;
+  static const int fileOffsetU32 = 0x77;
+  static const int fileData = 0x78;
+  static const int transferIdU32 = 0x79;
+
   static const int btTransportClientName = textUtf8;
   static const int fieldId = fieldIndex;
   static const int testId = fieldTestIndex;

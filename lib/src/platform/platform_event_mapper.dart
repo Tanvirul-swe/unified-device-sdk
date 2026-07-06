@@ -65,11 +65,14 @@ class PlatformEventMapper {
   /// Maps a native connection state map to a normalized form.
   ///
   /// [state] defaults to `'disconnected'` if not present or invalid.
+  /// [mtu] is extracted if present in the native event payload.
   static Map<String, dynamic> mapConnectionState(Map<String, dynamic> native) {
+    final mtu = native['mtu'];
     return {
       'state': native['state'] as String? ?? 'disconnected',
       'deviceId': native['deviceId'] as String? ?? native['id'] as String?,
       'message': native['message'] as String?,
+      'mtu': mtu is int && mtu > 0 ? mtu : null,
     };
   }
 

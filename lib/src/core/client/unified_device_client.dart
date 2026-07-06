@@ -328,6 +328,284 @@ class UnifiedDeviceClient {
     );
   }
 
+  // ---- Calibration Commands ----
+
+  /// Starts calibration for the specified sensor(s).
+  Future<DeviceResponse> calibrationStart({
+    required int sensorType,
+    Duration? timeout,
+  }) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.calibration,
+      commandId: CalibrationCommandIds.calibrationStart,
+      payload: TlvBuilder().addUint8(TlvTypes.sensorTypeU8, sensorType).build(),
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+  }
+
+  /// Gets the current calibration status.
+  Future<DeviceResponse> calibrationStatus({Duration? timeout}) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.calibration,
+      commandId: CalibrationCommandIds.calibrationStatus,
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+  }
+
+  /// Applies calibration values to the device.
+  Future<DeviceResponse> calibrationApply({
+    required int sensorType,
+    required List<int> calibrationData,
+    Duration? timeout,
+  }) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.calibration,
+      commandId: CalibrationCommandIds.calibrationApply,
+      payload: TlvBuilder()
+          .addUint8(TlvTypes.sensorTypeU8, sensorType)
+          .addBytes(TlvTypes.calData, calibrationData)
+          .build(),
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: false),
+    );
+  }
+
+  // ---- Configuration Commands ----
+
+  /// Reads a configuration parameter from the device.
+  Future<DeviceResponse> configRead({
+    required int configKey,
+    Duration? timeout,
+  }) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.configuration,
+      commandId: ConfigurationCommandIds.configRead,
+      payload: TlvBuilder().addUint16BE(TlvTypes.configKeyU16, configKey).build(),
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+  }
+
+  /// Writes a configuration parameter to the device.
+  Future<DeviceResponse> configWrite({
+    required int configKey,
+    required List<int> configValue,
+    Duration? timeout,
+  }) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.configuration,
+      commandId: ConfigurationCommandIds.configWrite,
+      payload: TlvBuilder()
+          .addUint16BE(TlvTypes.configKeyU16, configKey)
+          .addBytes(TlvTypes.configValue, configValue)
+          .build(),
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: false),
+    );
+  }
+
+  /// Lists all available configuration parameters from the device.
+  Future<DeviceResponse> configList({Duration? timeout}) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.configuration,
+      commandId: ConfigurationCommandIds.configList,
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+  }
+
+  // ---- Report History Commands ----
+
+  /// Gets a list of available report IDs from the device.
+  Future<DeviceResponse> reportList({Duration? timeout}) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.report,
+      commandId: ReportHistoryCommandIds.reportList,
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+  }
+
+  /// Gets a specific historical report by ID.
+  Future<DeviceResponse> reportGet({
+    required int reportId,
+    Duration? timeout,
+  }) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.report,
+      commandId: ReportHistoryCommandIds.reportGet,
+      payload: TlvBuilder().addUint32BE(TlvTypes.reportIdU32, reportId).build(),
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+  }
+
+  /// Deletes a specific historical report by ID.
+  Future<DeviceResponse> reportDelete({
+    required int reportId,
+    Duration? timeout,
+  }) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.report,
+      commandId: ReportHistoryCommandIds.reportDelete,
+      payload: TlvBuilder().addUint32BE(TlvTypes.reportIdU32, reportId).build(),
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: false),
+    );
+  }
+
+  /// Exports report data from the device.
+  Future<DeviceResponse> reportExport({
+    required int reportId,
+    required String format,
+    Duration? timeout,
+  }) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.report,
+      commandId: ReportHistoryCommandIds.reportExport,
+      payload: TlvBuilder()
+          .addUint32BE(TlvTypes.reportIdU32, reportId)
+          .addUtf8(TlvTypes.exportFormat, format)
+          .build(),
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+  }
+
+  // ---- File Transfer Commands ----
+
+  /// Starts a file transfer session to the device.
+  Future<DeviceResponse> fileTransferStart({
+    required String fileName,
+    required int fileSize,
+    Duration? timeout,
+  }) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.fileTransfer,
+      commandId: FileTransferCommandIds.fileTransferStart,
+      payload: TlvBuilder()
+          .addUtf8(TlvTypes.fileName, fileName)
+          .addUint32BE(TlvTypes.fileSizeU32, fileSize)
+          .build(),
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+  }
+
+  /// Sends a chunk of file data to the device.
+  Future<DeviceResponse> fileTransferChunk({
+    required int offset,
+    required List<int> chunkData,
+    Duration? timeout,
+  }) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.fileTransfer,
+      commandId: FileTransferCommandIds.fileTransferChunk,
+      payload: TlvBuilder()
+          .addUint32BE(TlvTypes.fileOffsetU32, offset)
+          .addBytes(TlvTypes.fileData, chunkData)
+          .build(),
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: false),
+    );
+  }
+
+  /// Ends a file transfer session.
+  Future<DeviceResponse> fileTransferEnd({
+    required int transferId,
+    Duration? timeout,
+  }) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.fileTransfer,
+      commandId: FileTransferCommandIds.fileTransferEnd,
+      payload: TlvBuilder().addUint32BE(TlvTypes.transferIdU32, transferId).build(),
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+  }
+
+  /// Gets the current file transfer status.
+  Future<DeviceResponse> fileTransferStatus({Duration? timeout}) {
+    return sendCommand(
+      productId: ProductIds.aunkurUcp1,
+      profileId: ProfileIds.defaultProfile,
+      sourceAddress: UcpAddresses.software,
+      destinationAddress: UcpAddresses.device,
+      op: OperationCodes.req,
+      commandClass: CommandClasses.fileTransfer,
+      commandId: FileTransferCommandIds.fileTransferStatus,
+      timeout: timeout,
+      options: const CommandOptions(waitForAck: true, waitForData: true),
+    );
+  }
+
   /// Sends a generic command and waits according to [options].
   Future<DeviceResponse> sendCommand({
     required int productId,
