@@ -62,37 +62,27 @@ class DeviceScanPanel extends StatelessWidget {
             ),
             const SizedBox(height: 16),
 
-            // Action buttons
+            // Action buttons - compact layout
             Row(
               children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: onToggleScan,
-                    icon: Icon(isScanning ? Icons.stop : Icons.search),
-                    label: Text(isScanning ? 'Stop Scan' : 'Start Scan'),
-                  ),
+                _compactFilledButton(
+                  onPressed: onToggleScan,
+                  icon: isScanning ? Icons.stop : Icons.search,
+                  label: isScanning ? 'Stop' : 'Scan',
+                  color: theme.colorScheme.primary,
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: canConnect ? onConnect : null,
-                    icon: const Icon(Icons.link),
-                    label: const Text('Connect'),
-                  ),
+                const SizedBox(width: 6),
+                _compactOutlinedButton(
+                  onPressed: canConnect ? onConnect : null,
+                  icon: Icons.link,
+                  label: 'Connect',
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: canDisconnect ? onDisconnect : null,
-                    icon: const Icon(Icons.link_off),
-                    label: const Text('Disconnect'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: canDisconnect ? Colors.red.shade700 : null,
-                      side: canDisconnect
-                          ? BorderSide(color: Colors.red.shade300)
-                          : null,
-                    ),
-                  ),
+                const SizedBox(width: 6),
+                _compactOutlinedButton(
+                  onPressed: canDisconnect ? onDisconnect : null,
+                  icon: Icons.link_off,
+                  label: 'Disconnect',
+                  danger: true,
                 ),
               ],
             ),
@@ -136,6 +126,66 @@ class DeviceScanPanel extends StatelessWidget {
                 (device) => _buildDeviceTile(context, device),
               ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _compactFilledButton({
+    required VoidCallback onPressed,
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Expanded(
+      child: SizedBox(
+        height: 40,
+        child: FilledButton(
+          onPressed: onPressed,
+          style: FilledButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            textStyle: const TextStyle(fontSize: 13),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 16),
+              const SizedBox(width: 4),
+              Text(label),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _compactOutlinedButton({
+    required VoidCallback? onPressed,
+    required IconData icon,
+    required String label,
+    bool danger = false,
+  }) {
+    return Expanded(
+      child: SizedBox(
+        height: 40,
+        child: OutlinedButton(
+          onPressed: onPressed,
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            textStyle: const TextStyle(fontSize: 13),
+            foregroundColor: danger ? Colors.red.shade700 : null,
+            side: danger && onPressed != null
+                ? BorderSide(color: Colors.red.shade300)
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 16),
+              const SizedBox(width: 4),
+              Text(label),
+            ],
+          ),
         ),
       ),
     );

@@ -105,6 +105,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       _platform.getPlatformVersion(),
       _platform.isBluetoothAvailable(),
       _platform.isBluetoothEnabled(),
+      _platform.requestBluetoothPermissions(),
     ]);
     if (!mounted) {
       return;
@@ -113,6 +114,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       _platformVersion = values[0] as String?;
       _bluetoothAvailable = values[1] as bool?;
       _bluetoothEnabled = values[2] as bool?;
+      _permissionsGranted = values[3] as bool?;
     });
   }
 

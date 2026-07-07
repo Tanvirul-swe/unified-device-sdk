@@ -401,26 +401,75 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Unified Device Debug Console'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.developer_board, color: theme.colorScheme.primary),
+            const SizedBox(width: 8),
+            const Text('Unified Device SDK'),
+          ],
+        ),
         actions: [
-          IconButton(
-            onPressed: _packetTraces.isEmpty ? null : _copyTrace,
-            icon: const Icon(Icons.copy_all_outlined),
-            tooltip: 'Copy',
-          ),
-          IconButton(
-            onPressed: _packetTraces.isEmpty ? null : _exportTrace,
-            icon: const Icon(Icons.ios_share_outlined),
-            tooltip: 'Export',
-          ),
-          IconButton(
-            onPressed: (_packetTraces.isEmpty && _logLines.isEmpty)
-                ? null
-                : _clearTrace,
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'Clear',
+          if (_busy)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              switch (value) {
+                case 'copy':
+                  _copyTrace();
+                  break;
+                case 'export':
+                  _exportTrace();
+                  break;
+                case 'clear':
+                  _clearTrace();
+                  break;
+                case 'refresh':
+                  _refreshBluetoothStatus();
+                  break;
+              }
+            },
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'refresh',
+                child: ListTile(
+                  leading: Icon(Icons.refresh),
+                  title: Text('Refresh Status'),
+                ),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
+                value: 'copy',
+                child: ListTile(
+                  leading: Icon(Icons.copy_all),
+                  title: Text('Copy Trace'),
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'export',
+                child: ListTile(
+                  leading: Icon(Icons.ios_share),
+                  title: Text('Export Trace'),
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'clear',
+                child: ListTile(
+                  leading: Icon(Icons.delete_outline),
+                  title: Text('Clear All'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
