@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:unified_device_sdk/unified_device_sdk.dart';
 
+import 'screens/soil_test_connection_screen.dart';
+
 class DebugConsoleScreen extends StatefulWidget {
   final UnifiedDevicePlatform? platform;
   final bool enablePlatformBootstrap;
@@ -243,6 +245,14 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Packet trace copied')));
+  }
+
+  Future<void> _openSoilTestFlow() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SoilTestConnectionScreen(platform: _platform),
+      ),
+    );
   }
 
   Future<void> _exportTrace() async {
@@ -577,19 +587,25 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
             if (_devices.isEmpty)
               const Text('No matching Aunkur_UCP1 / FFE0 devices yet')
             else
-              ..._devices.values.map(
-                (device) => RadioListTile<String>(
-                  value: device.deviceId,
-                  groupValue: _selectedDeviceId,
-                  onChanged: (value) {
+              ..._devices.values.map((device) {
+                final selected = device.deviceId == _selectedDeviceId;
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  onTap: () {
                     setState(() {
-                      _selectedDeviceId = value;
+                      _selectedDeviceId = device.deviceId;
                     });
                   },
+                  leading: Icon(
+                    selected
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_off,
+                  ),
                   title: Text(device.name ?? BleConstants.defaultDeviceName),
                   subtitle: Text('${device.deviceId}  RSSI ${device.rssi}'),
-                ),
-              ),
+                  selected: selected,
+                );
+              }),
           ],
         ),
       ),

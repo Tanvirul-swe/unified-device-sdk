@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:unified_device_sdk/unified_device_sdk.dart';
 
+import 'soil_test_connection_screen.dart';
 import '../widgets/connection_status_bar.dart';
 import '../widgets/device_scan_panel.dart';
 import '../widgets/command_panel.dart';
@@ -161,6 +162,14 @@ class _DashboardScreenState extends State<DashboardScreen>
   Future<void> _disconnect() async {
     setState(() => _isScanning = false);
     await _runAction('Disconnect', _client.disconnect, allowWhileBusy: true);
+  }
+
+  Future<void> _openSoilTestFlow() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SoilTestConnectionScreen(platform: _platform),
+      ),
+    );
   }
 
   Future<void> _retryBootstrap() async {
@@ -573,53 +582,192 @@ class _DashboardScreenState extends State<DashboardScreen>
   }
 
   Widget _buildConnectionControls(ThemeData theme) {
+    final accentColor = _connectionAccentColor(theme);
+    final stateLabel = _connectionState == DeviceConnectionState.disconnected
+        ? 'Ready to scan'
+        : _connectionState.name;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: accentColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.hub_outlined, color: accentColor, size: 20),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Connection Controls',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _connectionSummary(),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: accentColor.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    stateLabel,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: accentColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primary.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.16),
+                ),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Connection',
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
+                    'Soil Test Demo',
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 6),
                   Text(
-                    _connectionState == DeviceConnectionState.disconnected
-                        ? 'Ready to scan'
-                        : _connectionState.name,
+                    'Launch the guided hardware flow for connection, live moisture, and final soil report.',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
+                      height: 1.35,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _busy ? null : _openSoilTestFlow,
+                      icon: const Icon(Icons.science_outlined, size: 18),
+                      label: const Text('Try Soil Test'),
                     ),
                   ),
                 ],
               ),
             ),
-            if (_canRetryBootstrap)
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: OutlinedButton.icon(
-                  onPressed: _busy ? null : _retryBootstrap,
-                  icon: const Icon(Icons.refresh, size: 18),
-                  label: const Text('Bootstrap'),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.orange.shade700,
-                    side: BorderSide(color: Colors.orange.shade300),
-                  ),
-                ),
+            const SizedBox(height: 16),
+            Text(
+              'Quick Actions',
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.4,
               ),
-            OutlinedButton.icon(
-              onPressed: _busy ? null : _requestPermissions,
-              icon: const Icon(Icons.shield_outlined, size: 18),
-              label: const Text('Permissions'),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _quickActionButton(
+                  onPressed: _busy ? null : _requestPermissions,
+                  icon: Icons.shield_outlined,
+                  label: 'Permissions',
+                ),
+                if (_canRetryBootstrap)
+                  _quickActionButton(
+                    onPressed: _busy ? null : _retryBootstrap,
+                    icon: Icons.refresh,
+                    label: 'Bootstrap',
+                    foregroundColor: Colors.orange.shade700,
+                    borderColor: Colors.orange.shade300,
+                  ),
+              ],
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  String _connectionSummary() {
+    if (_sessionReady) {
+      return 'Session is active. You can run commands or jump into the soil test demo.';
+    }
+    if (_connectionState == DeviceConnectionState.disconnected) {
+      return 'Scan and connect to a supported device to bootstrap the UCP session.';
+    }
+    if (_canRetryBootstrap) {
+      return 'BLE link is up, but the UCP session is not active yet.';
+    }
+    return 'Connection progress is in flight. Wait for bootstrap to complete.';
+  }
+
+  Color _connectionAccentColor(ThemeData theme) {
+    if (_sessionReady) {
+      return const Color(0xFF2E7D32);
+    }
+    switch (_connectionState) {
+      case DeviceConnectionState.connecting:
+      case DeviceConnectionState.disconnecting:
+        return Colors.orange;
+      case DeviceConnectionState.error:
+      case DeviceConnectionState.connectionLost:
+        return theme.colorScheme.error;
+      case DeviceConnectionState.connected:
+      case DeviceConnectionState.servicesDiscovered:
+      case DeviceConnectionState.notifySubscribed:
+      case DeviceConnectionState.mtuReady:
+      case DeviceConnectionState.transportReady:
+        return theme.colorScheme.primary;
+      default:
+        return theme.colorScheme.onSurfaceVariant;
+    }
+  }
+
+  Widget _quickActionButton({
+    required VoidCallback? onPressed,
+    required IconData icon,
+    required String label,
+    Color? foregroundColor,
+    Color? borderColor,
+  }) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 18),
+      label: Text(label),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: foregroundColor,
+        side: borderColor == null ? null : BorderSide(color: borderColor),
       ),
     );
   }
