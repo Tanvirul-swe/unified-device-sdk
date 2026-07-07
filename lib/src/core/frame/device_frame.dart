@@ -279,8 +279,8 @@ class DeviceFrame extends UcpFrame {
     required super.commandId,
     required super.sequence,
     required super.flags,
-    List<int> payload = const [],
-    List<Tlv> tlvs = const [],
+    super.payload,
+    super.tlvs,
     required super.crc,
     super.minSequence = ProtocolConstants.initialSequenceNumber,
     super.maxSequence = ProtocolConstants.maxSequenceNumber,
@@ -288,8 +288,6 @@ class DeviceFrame extends UcpFrame {
          sourceAddress: sourceAddress ?? UcpAddresses.defaultSource,
          destinationAddress:
              destinationAddress ?? address ?? UcpAddresses.defaultDestination,
-         payload: payload,
-         tlvs: tlvs,
        );
 
   factory DeviceFrame.fromUcpFrame(UcpFrame frame) {
