@@ -54,6 +54,8 @@ class BleManager(
 
     companion object {
         private const val TAG = "UnifiedDeviceSdkBle"
+        private const val CONNECT_RETRY_DELAY_MS = 500L
+        private const val CONNECT_CLEANUP_DELAY_MS = 300L
         private val SERVICE_UUID: UUID =
             UUID.fromString("0000FFE0-0000-1000-8000-00805F9B34FB")
         private val NOTIFY_CHARACTERISTIC_UUID: UUID =
@@ -218,14 +220,31 @@ class BleManager(
             return
         }
 
+        stopScanIfRunning()
+        cleanupGatt("before_connect:$deviceId")
+
         pendingConnectResult = result
         connectionRetryCount = 0
-        connectInternal(deviceId)
+        emitConnectionState("connecting", device.address)
+        mainHandler.postDelayed(
+            {
+                if (pendingConnectResult == result) {
+                    connectInternal(device.address)
+                }
+            },
+            CONNECT_CLEANUP_DELAY_MS
+        )
     }
 
     @SuppressLint("MissingPermission")
     private fun connectInternal(deviceId: String) {
-        val adapter = bluetoothAdapter() ?: return
+        val adapter = bluetoothAdapter()
+        if (adapter == null) {
+            handleConnectionFailure("bluetooth_unavailable", "Bluetooth adapter unavailable")
+            cleanupGatt("connect_internal_no_adapter")
+            emitConnectionState("disconnected", deviceId, message = lastConnectionIssue?.message)
+            return
+        }
         val device = try {
             adapter.getRemoteDevice(deviceId)
         } catch (_: IllegalArgumentException) {
@@ -234,14 +253,15 @@ class BleManager(
 
         if (device == null) {
             handleConnectionFailure("device_not_found", "Bluetooth device not found")
+            cleanupGatt("connect_internal_device_not_found")
+            emitConnectionState("disconnected", deviceId, message = lastConnectionIssue?.message)
             return
         }
 
-        emitConnectionState("connecting", device.address)
-        stopScanIfRunning()
-        closeGatt()
         connectedDeviceId = device.address
         connectionReady = false
+        notifyCharacteristic = null
+        writeCharacteristic = null
         lastConnectionIssue = null
         Log.d(TAG, "Connecting to BLE device=${device.address} (attempt ${connectionRetryCount + 1})")
 
@@ -257,20 +277,29 @@ class BleManager(
                 "Failed to initiate BLE connection",
                 mapOf("deviceId" to device.address)
             )
+            cleanupGatt("connect_gatt_returned_null")
+            emitConnectionState("disconnected", device.address, message = lastConnectionIssue?.message)
         }
     }
 
     private fun triggerConnectionRetry(logMessage: String): Boolean {
-        if (pendingConnectResult != null && connectionRetryCount < maxConnectionRetries) {
+        val deviceId = connectedDeviceId
+        if (pendingConnectResult != null && deviceId != null && connectionRetryCount < maxConnectionRetries) {
             connectionRetryCount++
-            Log.w(TAG, "$logMessage. Retrying ($connectionRetryCount/$maxConnectionRetries) in 500ms...")
-            closeGatt()
+            Log.w(
+                TAG,
+                "$logMessage. Retrying ($connectionRetryCount/$maxConnectionRetries) in ${CONNECT_RETRY_DELAY_MS}ms..."
+            )
+            cleanupGatt(
+                "retry:$logMessage",
+                failPendingConnect = false,
+                clearPendingConnect = false
+            )
             mainHandler.postDelayed({
-                val deviceId = connectedDeviceId
-                if (deviceId != null && pendingConnectResult != null) {
+                if (pendingConnectResult != null) {
                     connectInternal(deviceId)
                 }
-            }, 500)
+            }, CONNECT_RETRY_DELAY_MS)
             return true
         }
         return false
@@ -286,9 +315,8 @@ class BleManager(
         val gatt = bluetoothGatt
         if (gatt == null) {
             val deviceId = connectedDeviceId
-            cleanupConnectionState()
             lastConnectionIssue = null
-            connectedDeviceId = null
+            cleanupGatt("manual_disconnect_without_gatt")
             emitConnectionState("disconnected", deviceId)
             result.success(null)
             return
@@ -300,10 +328,12 @@ class BleManager(
             gatt.disconnect()
         } catch (securityException: SecurityException) {
             pendingDisconnectResult = null
+            cleanupGatt("disconnect_permission_denied")
             Log.e(TAG, "Bluetooth disconnect permission denied", securityException)
             result.error("permission_denied", "Bluetooth connect permission denied", null)
         } catch (exception: Exception) {
             pendingDisconnectResult = null
+            cleanupGatt("disconnect_failed")
             Log.e(TAG, "BLE disconnect failed", exception)
             result.error("disconnect_failed", "BLE disconnect failed", null)
         }
@@ -526,7 +556,7 @@ class BleManager(
             }
         }
         completePendingResultsOnDispose()
-        closeGatt()
+        cleanupGatt("dispose", failPendingConnect = false, failPendingWrite = false, completePendingDisconnect = false)
         scanEventSink = null
         connectionEventSink = null
         notificationEventSink = null
@@ -629,9 +659,12 @@ class BleManager(
         Log.e(TAG, "Connection failure [$code]: $message details=$details")
         val issue = ConnectionIssue(code, message, details)
         lastConnectionIssue = issue
-        pendingConnectResult?.error(code, message, issue.asMethodDetails().takeUnless { it.isEmpty() })
-        pendingConnectResult = null
-        cleanupConnectionState()
+        emitConnectionState(
+            "error",
+            connectedDeviceId ?: details["deviceId"] as? String,
+            message = message,
+            details = issue.asEventDetails()
+        )
     }
 
     private fun handleDisconnectEvent(unexpected: Boolean, wasReady: Boolean = connectionReady) {
@@ -641,8 +674,15 @@ class BleManager(
         val issue = lastConnectionIssue
         val state = if (unexpected && wasReady) "connectionLost" else "disconnected"
         Log.d(TAG, "BLE disconnected state=$state device=$deviceId")
-        cleanupConnectionState()
-        closeGatt()
+        cleanupGatt(
+            reason = if (unexpected) "unexpected_disconnect" else "disconnect_complete",
+            failPendingConnect = false,
+            failPendingWrite = false,
+            completePendingDisconnect = false,
+            clearPendingConnect = false,
+            clearPendingWrite = false,
+            clearPendingDisconnect = false
+        )
         emitConnectionState(
             state,
             deviceId,
@@ -671,7 +711,6 @@ class BleManager(
         pendingWriteResult?.error("disconnect_failed", "Disconnected before write completed", null)
         pendingWriteResult = null
         lastConnectionIssue = null
-        connectedDeviceId = null
     }
 
     private fun cleanupConnectionState() {
@@ -680,14 +719,60 @@ class BleManager(
         writeCharacteristic = null
     }
 
-    private fun closeGatt() {
+    @SuppressLint("MissingPermission")
+    private fun cleanupGatt(
+        reason: String,
+        failPendingConnect: Boolean = true,
+        failPendingWrite: Boolean = true,
+        completePendingDisconnect: Boolean = true,
+        clearPendingConnect: Boolean = true,
+        clearPendingWrite: Boolean = true,
+        clearPendingDisconnect: Boolean = true
+    ) {
+        Log.d(TAG, "cleanupGatt reason=$reason")
         cleanupConnectionState()
+        if (failPendingWrite) {
+            pendingWriteResult?.error(
+                "disconnected",
+                "BLE disconnected during write",
+                mapOf("reason" to reason)
+            )
+        }
+        if (failPendingWrite || clearPendingWrite) {
+            pendingWriteResult = null
+        }
+
+        if (failPendingConnect) {
+            pendingConnectResult?.error(
+                "disconnected",
+                "BLE disconnected during connect",
+                mapOf("reason" to reason)
+            )
+        }
+        if (failPendingConnect || clearPendingConnect) {
+            pendingConnectResult = null
+        }
+
+        if (completePendingDisconnect) {
+            pendingDisconnectResult?.success(null)
+        }
+        if (completePendingDisconnect || clearPendingDisconnect) {
+            pendingDisconnectResult = null
+        }
+
+        try {
+            bluetoothGatt?.disconnect()
+        } catch (exception: Exception) {
+            Log.w(TAG, "disconnect ignored during cleanup", exception)
+        }
+
         try {
             bluetoothGatt?.close()
         } catch (exception: Exception) {
             Log.w(TAG, "Failed to close BluetoothGatt cleanly", exception)
         }
         bluetoothGatt = null
+        connectedDeviceId = null
     }
 
     private fun stopScanIfRunning() {
@@ -717,6 +802,11 @@ class BleManager(
 
     @SuppressLint("MissingPermission")
     private fun configureGattServices(gatt: BluetoothGatt) {
+        if (gatt != bluetoothGatt) {
+            Log.w(TAG, "Ignoring configureGattServices for stale GATT=${gatt.device?.address}")
+            return
+        }
+
         val service: BluetoothGattService? = gatt.getService(SERVICE_UUID)
         if (service == null) {
             handleConnectionFailure(
@@ -724,7 +814,8 @@ class BleManager(
                 "Required service FFE0 not found",
                 mapOf("deviceId" to connectedDeviceId, "serviceUuid" to SERVICE_UUID.toString())
             )
-            gatt.disconnect()
+            cleanupGatt("service_not_found")
+            emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
             return
         }
 
@@ -740,7 +831,8 @@ class BleManager(
                     "writeCharacteristicUuid" to WRITE_CHARACTERISTIC_UUID.toString()
                 )
             )
-            gatt.disconnect()
+            cleanupGatt("characteristic_not_found")
+            emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
             return
         }
 
@@ -751,7 +843,8 @@ class BleManager(
                 "Failed to enable notifications on FFE1",
                 mapOf("deviceId" to connectedDeviceId, "characteristicUuid" to NOTIFY_CHARACTERISTIC_UUID.toString())
             )
-            gatt.disconnect()
+            cleanupGatt("notification_enable_failed")
+            emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
             return
         }
 
@@ -762,7 +855,8 @@ class BleManager(
                 "CCCD descriptor not found for FFE1",
                 mapOf("deviceId" to connectedDeviceId, "descriptorUuid" to CCCD_UUID.toString())
             )
-            gatt.disconnect()
+            cleanupGatt("cccd_not_found")
+            emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
             return
         }
 
@@ -782,7 +876,8 @@ class BleManager(
                             "statusName" to describeGattStatus(status)
                         )
                     )
-                    gatt.disconnect()
+                    cleanupGatt("descriptor_write_start_failed")
+                    emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
                 }
             } else {
                 @Suppress("DEPRECATION")
@@ -795,17 +890,20 @@ class BleManager(
                         "Failed to enable notifications",
                         mapOf("deviceId" to connectedDeviceId)
                     )
-                    gatt.disconnect()
+                    cleanupGatt("descriptor_write_start_failed")
+                    emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
                 }
             }
         } catch (securityException: SecurityException) {
             Log.e(TAG, "Bluetooth connect permission denied during notification setup", securityException)
             handleConnectionFailure("permission_denied", "Bluetooth connect permission denied")
-            gatt.disconnect()
+            cleanupGatt("notification_permission_denied")
+            emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
         } catch (exception: Exception) {
             Log.e(TAG, "Failed to enable notifications", exception)
             handleConnectionFailure("unknown_error", "Failed to enable notifications")
-            gatt.disconnect()
+            cleanupGatt("notification_setup_exception")
+            emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
         }
     }
 
@@ -868,6 +966,10 @@ class BleManager(
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            if (gatt != bluetoothGatt) {
+                Log.w(TAG, "Ignoring onConnectionStateChange from stale GATT=${gatt.device?.address}")
+                return
+            }
             Log.d(
                 TAG,
                 "onConnectionStateChange device=${gatt.device?.address} status=$status " +
@@ -875,6 +977,7 @@ class BleManager(
             )
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 val wasReady = connectionReady
+                val connectWasPending = pendingConnectResult != null
                 val unexpected = pendingDisconnectResult == null && pendingConnectResult == null
                 
                 if (triggerConnectionRetry("GATT connection failed with status=$status (${describeGattStatus(status)})")) {
@@ -892,25 +995,41 @@ class BleManager(
                         "newStateName" to describeConnectionState(newState)
                     )
                 )
-                if (newState != BluetoothGatt.STATE_DISCONNECTED) {
-                    try {
-                        gatt.disconnect()
-                    } catch (e: SecurityException) {
-                        Log.e(TAG, "SecurityException during disconnect", e)
-                        closeGatt()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Exception during disconnect", e)
-                        closeGatt()
-                    }
-                } else {
-                    handleDisconnectEvent(unexpected, wasReady)
+                cleanupGatt(
+                    "gatt_status_error:$status",
+                    failPendingConnect = false,
+                    failPendingWrite = false,
+                    completePendingDisconnect = false,
+                    clearPendingConnect = false,
+                    clearPendingWrite = false,
+                    clearPendingDisconnect = false
+                )
+                emitConnectionState(
+                    if (unexpected && wasReady) "connectionLost" else "disconnected",
+                    gatt.device?.address,
+                    message = lastConnectionIssue?.message,
+                    details = lastConnectionIssue?.asEventDetails() ?: emptyMap()
+                )
+                if (connectWasPending) {
+                    pendingConnectResult?.error(
+                        "gatt_error",
+                        lastConnectionIssue?.message ?: "BLE connection failed",
+                        lastConnectionIssue?.asMethodDetails()
+                    )
                 }
+                pendingConnectResult = null
+                pendingDisconnectResult?.success(null)
+                pendingDisconnectResult = null
+                pendingWriteResult?.error("disconnect_failed", "Disconnected before write completed", null)
+                pendingWriteResult = null
+                lastConnectionIssue = null
                 return
             }
 
             when (newState) {
                 BluetoothGatt.STATE_CONNECTED -> {
                     connectionRetryCount = 0
+                    emitConnectionState("connected", gatt.device?.address)
                     try {
                         if (!gatt.discoverServices()) {
                             if (triggerConnectionRetry("Failed to start service discovery")) {
@@ -925,7 +1044,8 @@ class BleManager(
                                     "statusName" to describeGattStatus(status)
                                 )
                             )
-                            gatt.disconnect()
+                            cleanupGatt("discover_services_start_failed")
+                            emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
                         }
                     } catch (securityException: SecurityException) {
                         Log.e(TAG, "Bluetooth connect permission denied during service discovery", securityException)
@@ -933,14 +1053,16 @@ class BleManager(
                             return
                         }
                         handleConnectionFailure("permission_denied", "Bluetooth connect permission denied")
-                        gatt.disconnect()
+                        cleanupGatt("discover_services_permission_denied")
+                        emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
                     } catch (exception: Exception) {
                         Log.e(TAG, "BLE service discovery failed", exception)
                         if (triggerConnectionRetry("BLE service discovery failed")) {
                             return
                         }
                         handleConnectionFailure("unknown_error", "BLE service discovery failed")
-                        gatt.disconnect()
+                        cleanupGatt("discover_services_exception")
+                        emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
                     }
                 }
 
@@ -953,6 +1075,10 @@ class BleManager(
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+            if (gatt != bluetoothGatt) {
+                Log.w(TAG, "Ignoring onServicesDiscovered from stale GATT=${gatt.device?.address}")
+                return
+            }
             Log.d(
                 TAG,
                 "onServicesDiscovered device=${gatt.device?.address} status=$status (${describeGattStatus(status)})"
@@ -970,9 +1096,11 @@ class BleManager(
                         "statusName" to describeGattStatus(status)
                     )
                 )
-                gatt.disconnect()
+                cleanupGatt("services_discovered_error:$status")
+                emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
                 return
             }
+            emitConnectionState("servicesDiscovered", gatt.device?.address)
             configureGattServices(gatt)
         }
 
@@ -981,6 +1109,10 @@ class BleManager(
             descriptor: BluetoothGattDescriptor,
             status: Int
         ) {
+            if (gatt != bluetoothGatt) {
+                Log.w(TAG, "Ignoring onDescriptorWrite from stale GATT=${gatt.device?.address}")
+                return
+            }
             if (descriptor.uuid != CCCD_UUID) {
                 return
             }
@@ -998,28 +1130,33 @@ class BleManager(
                         "statusName" to describeGattStatus(status)
                     )
                 )
-                gatt.disconnect()
+                cleanupGatt("descriptor_write_error:$status")
+                emitConnectionState("disconnected", gatt.device?.address, message = lastConnectionIssue?.message)
                 return
             }
 
-            connectionReady = true
-            Log.d(TAG, "BLE connection ready device=$connectedDeviceId")
+            emitConnectionState("notifySubscribed", gatt.device?.address)
 
             try {
                 Log.d(TAG, "Requesting MTU of 517")
-                gatt.requestMtu(517)
+                if (!gatt.requestMtu(517)) {
+                    Log.w(TAG, "requestMtu(517) returned false, continuing with fallback MTU")
+                    onMtuChanged(gatt, 256, BluetoothGatt.GATT_FAILURE)
+                }
             } catch (e: SecurityException) {
                 Log.w(TAG, "Permission denied while requesting MTU", e)
+                onMtuChanged(gatt, 256, BluetoothGatt.GATT_FAILURE)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to request MTU", e)
+                onMtuChanged(gatt, 256, BluetoothGatt.GATT_FAILURE)
             }
-
-            emitConnectionState("connected", connectedDeviceId)
-            pendingConnectResult?.success(null)
-            pendingConnectResult = null
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+            if (gatt != bluetoothGatt) {
+                Log.w(TAG, "Ignoring onMtuChanged from stale GATT=${gatt.device?.address}")
+                return
+            }
             Log.d(
                 TAG,
                 "onMtuChanged device=${gatt.device?.address} mtu=$mtu status=$status " +
@@ -1031,7 +1168,11 @@ class BleManager(
                 Log.w(TAG, "MTU request failed (status=$status), falling back to 256")
                 256
             }
+            connectionReady = true
+            Log.d(TAG, "BLE connection ready device=$connectedDeviceId mtu=$effectiveMtu")
             emitConnectionState("mtuReady", connectedDeviceId, details = mapOf("mtu" to effectiveMtu))
+            pendingConnectResult?.success(null)
+            pendingConnectResult = null
         }
 
         @Deprecated("Deprecated in Java")
@@ -1060,6 +1201,10 @@ class BleManager(
             characteristic: BluetoothGattCharacteristic,
             status: Int
         ) {
+            if (gatt != bluetoothGatt) {
+                Log.w(TAG, "Ignoring onCharacteristicWrite from stale GATT=${gatt.device?.address}")
+                return
+            }
             val result = pendingWriteResult ?: return
             pendingWriteResult = null
             if (status == BluetoothGatt.GATT_SUCCESS) {

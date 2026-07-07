@@ -402,7 +402,9 @@ class UnifiedDeviceClient {
       op: OperationCodes.req,
       commandClass: CommandClasses.configuration,
       commandId: ConfigurationCommandIds.configRead,
-      payload: TlvBuilder().addUint16BE(TlvTypes.configKeyU16, configKey).build(),
+      payload: TlvBuilder()
+          .addUint16BE(TlvTypes.configKeyU16, configKey)
+          .build(),
       timeout: timeout,
       options: const CommandOptions(waitForAck: true, waitForData: true),
     );
@@ -464,10 +466,7 @@ class UnifiedDeviceClient {
   }
 
   /// Gets a specific historical report by ID.
-  Future<DeviceResponse> reportGet({
-    required int reportId,
-    Duration? timeout,
-  }) {
+  Future<DeviceResponse> reportGet({required int reportId, Duration? timeout}) {
     return sendCommand(
       productId: ProductIds.aunkurUcp1,
       profileId: ProfileIds.defaultProfile,
@@ -585,7 +584,9 @@ class UnifiedDeviceClient {
       op: OperationCodes.req,
       commandClass: CommandClasses.fileTransfer,
       commandId: FileTransferCommandIds.fileTransferEnd,
-      payload: TlvBuilder().addUint32BE(TlvTypes.transferIdU32, transferId).build(),
+      payload: TlvBuilder()
+          .addUint32BE(TlvTypes.transferIdU32, transferId)
+          .build(),
       timeout: timeout,
       options: const CommandOptions(waitForAck: true, waitForData: true),
     );
@@ -664,7 +665,13 @@ class UnifiedDeviceClient {
   Future<void> sendRawData(List<int> data) async {
     _throwIfDisposed();
     _throwIfNotConnected();
-    if (_sessionManager.state.index < DeviceConnectionState.mtuReady.index) {
+    final state = _sessionManager.state;
+    if (state != DeviceConnectionState.mtuReady &&
+        state != DeviceConnectionState.transportReady &&
+        state != DeviceConnectionState.sessionActive &&
+        state != DeviceConnectionState.measurementActive &&
+        state != DeviceConnectionState.streamActive &&
+        state != DeviceConnectionState.safeDisconnectPending) {
       throw const TransportException(
         'Transport is not ready for raw writes',
         errorType: TransportErrorType.writeFailed,

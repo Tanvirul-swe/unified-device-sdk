@@ -36,6 +36,7 @@ class UcpSessionManager {
   DeviceConnectionState _state = DeviceConnectionState.disconnected;
   Completer<void>? _bootstrapCompleter;
   Completer<void>? _disconnectCompleter;
+  bool _bootstrapStarted = false;
   bool _isDisposed = false;
 
   // Heartbeat
@@ -205,6 +206,8 @@ class UcpSessionManager {
       case DeviceConnectionState.scanning:
       case DeviceConnectionState.connecting:
       case DeviceConnectionState.disconnecting:
+      case DeviceConnectionState.servicesDiscovered:
+      case DeviceConnectionState.notifySubscribed:
         _updateState(state);
         break;
       case DeviceConnectionState.connected:
@@ -213,13 +216,21 @@ class UcpSessionManager {
           deviceName: BleConstants.defaultDeviceName,
           state: DeviceConnectionState.connected,
         );
+        _bootstrapStarted = false;
         _updateState(DeviceConnectionState.connected);
+        break;
+      case DeviceConnectionState.mtuReady:
+        _updateState(DeviceConnectionState.mtuReady);
         unawaited(_startBootstrapIfNeeded());
+        break;
+      case DeviceConnectionState.error:
+        _updateState(DeviceConnectionState.error);
         break;
       case DeviceConnectionState.disconnected:
       case DeviceConnectionState.connectionLost:
         _stopHeartbeat();
         _currentSession = null;
+        _bootstrapStarted = false;
         _updateState(state);
         _disconnectCompleter?.complete();
         _disconnectCompleter = null;
@@ -250,6 +261,12 @@ class UcpSessionManager {
       return true;
     }
 
+    if (nextState == DeviceConnectionState.disconnected ||
+        nextState == DeviceConnectionState.connectionLost ||
+        nextState == DeviceConnectionState.error) {
+      return true;
+    }
+
     // Native BLE callbacks can report lower-level readiness states like
     // `mtuReady` after the UCP bootstrap has already advanced to
     // `transportReady` or `sessionActive`. Ignore those regressions.
@@ -262,22 +279,23 @@ class UcpSessionManager {
   }
 
   Future<void> _startBootstrapIfNeeded() {
-    final existing = _bootstrapCompleter;
-    if (existing != null) {
-      return existing.future;
+    final completer = _bootstrapCompleter ??= Completer<void>();
+
+    if (_bootstrapStarted ||
+        _state == DeviceConnectionState.error ||
+        _state == DeviceConnectionState.disconnected ||
+        _state == DeviceConnectionState.connectionLost ||
+        _state.index < DeviceConnectionState.mtuReady.index) {
+      return completer.future;
     }
 
-    final completer = Completer<void>();
-    _bootstrapCompleter = completer;
+    _bootstrapStarted = true;
     unawaited(_runBootstrap(completer));
     return completer.future;
   }
 
   Future<void> _runBootstrap(Completer<void> completer) async {
     try {
-      _updateState(DeviceConnectionState.servicesDiscovered);
-      _updateState(DeviceConnectionState.notifySubscribed);
-      _updateState(DeviceConnectionState.mtuReady);
       await openTransport();
       _updateState(DeviceConnectionState.transportReady);
       await openRtcSession();
@@ -297,6 +315,7 @@ class UcpSessionManager {
     } finally {
       if (identical(_bootstrapCompleter, completer)) {
         _bootstrapCompleter = null;
+        _bootstrapStarted = false;
       }
     }
   }

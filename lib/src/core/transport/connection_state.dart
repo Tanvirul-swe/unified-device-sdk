@@ -42,6 +42,9 @@ enum DeviceConnectionState {
   /// Device is in the process of disconnecting.
   disconnecting,
 
+  /// Native BLE transport reported a recoverable or terminal error.
+  error,
+
   /// Connection was lost unexpectedly.
   connectionLost,
 }

@@ -56,7 +56,11 @@ class BleTransport implements DeviceTransport {
 
   @override
   bool get isConnected =>
-      _currentConnectionState == DeviceConnectionState.connected;
+      _connectedDeviceId != null &&
+      _currentConnectionState != DeviceConnectionState.disconnected &&
+      _currentConnectionState != DeviceConnectionState.disconnecting &&
+      _currentConnectionState != DeviceConnectionState.error &&
+      _currentConnectionState != DeviceConnectionState.connectionLost;
 
   @override
   String? get connectedDeviceId => _connectedDeviceId;
@@ -108,9 +112,13 @@ class BleTransport implements DeviceTransport {
     final mtu = mapped['mtu'] as int?;
 
     _currentConnectionState = nextState;
-    if (nextState == DeviceConnectionState.connected) {
+    if (nextState == DeviceConnectionState.connected ||
+        nextState == DeviceConnectionState.servicesDiscovered ||
+        nextState == DeviceConnectionState.notifySubscribed ||
+        nextState == DeviceConnectionState.mtuReady) {
       _connectedDeviceId = deviceId;
     } else if (nextState == DeviceConnectionState.disconnected ||
+        nextState == DeviceConnectionState.error ||
         nextState == DeviceConnectionState.connectionLost) {
       _connectedDeviceId = null;
       _negotiatedMtu = 0;
@@ -149,10 +157,16 @@ class BleTransport implements DeviceTransport {
       case 'connected':
       case 'ready':
         return DeviceConnectionState.connected;
+      case 'servicesDiscovered':
+        return DeviceConnectionState.servicesDiscovered;
+      case 'notifySubscribed':
+        return DeviceConnectionState.notifySubscribed;
       case 'mtuReady':
         return DeviceConnectionState.mtuReady;
       case 'disconnecting':
         return DeviceConnectionState.disconnecting;
+      case 'error':
+        return DeviceConnectionState.error;
       case 'connectionLost':
         return DeviceConnectionState.connectionLost;
       case 'disconnected':
