@@ -11,11 +11,13 @@ class UcpFrameBuffer {
   final int maxBufferSize;
   final int sofDelimiter;
   final UcpFrameParser _parser;
+  void Function(List<int> bytes, Object error)? onFrameError;
 
   UcpFrameBuffer({
     this.maxBufferSize = 4096,
     this.sofDelimiter = ProtocolConstants.sof,
     UcpFrameParser? parser,
+    this.onFrameError,
   }) : _parser = parser ?? UcpFrameParser();
 
   int get length => _buffer.length;
@@ -78,9 +80,11 @@ class UcpFrameBuffer {
       try {
         frames.add(_parser.parse(candidate));
         _buffer.removeRange(0, totalLength);
-      } on FrameException {
+      } on FrameException catch (error) {
+        onFrameError?.call(List<int>.unmodifiable(candidate), error);
         _buffer.removeAt(0);
-      } on CrcException {
+      } on CrcException catch (error) {
+        onFrameError?.call(List<int>.unmodifiable(candidate), error);
         _buffer.removeAt(0);
       }
     }
@@ -91,8 +95,12 @@ class UcpFrameBuffer {
 
 /// Backward-compatible buffer that returns [DeviceFrame] objects.
 class FrameBuffer extends UcpFrameBuffer {
-  FrameBuffer({super.maxBufferSize, super.sofDelimiter, FrameParser? parser})
-    : super(parser: parser);
+  FrameBuffer({
+    super.maxBufferSize,
+    super.sofDelimiter,
+    FrameParser? parser,
+    super.onFrameError,
+  }) : super(parser: parser);
 
   @override
   List<DeviceFrame> addBytes(List<int> bytes) {

@@ -3,6 +3,9 @@ import 'dart:async';
 import 'ucp_session_manager.dart';
 import 'unified_device_client_config.dart';
 import 'unified_device_session.dart';
+import '../../logging/device_communication_log.dart';
+import '../../logging/device_communication_log_controller.dart';
+import '../../logging/ucp_log_mode.dart';
 import '../errors/protocol_exception.dart';
 import '../errors/transport_exception.dart';
 import '../errors/unified_device_exception.dart';
@@ -41,9 +44,12 @@ class UnifiedDeviceClient {
   final FrameBuffer _frameBuffer;
   final UcpResponseManager _responseManager;
   final UcpSessionManager _sessionManager;
+  final DeviceCommunicationLogController _communicationLogController =
+      DeviceCommunicationLogController();
   final CommonResponseParser _responseParser = const CommonResponseParser();
 
   bool _isDisposed = false;
+  int _logCounter = 0;
 
   /// Creates a client from an explicit configuration.
   factory UnifiedDeviceClient(UnifiedDeviceClientConfig config) {
@@ -88,7 +94,10 @@ class UnifiedDeviceClient {
        _frameBuilder = frameBuilder,
        _frameBuffer = frameBuffer,
        _responseManager = responseManager,
-       _sessionManager = sessionManager;
+       _sessionManager = sessionManager {
+    _responseManager.onLogEvent = _handleInternalLogEvent;
+    _sessionManager.onLogEvent = _handleInternalLogEvent;
+  }
 
   /// Creates a client with a generic BLE transport by default.
   factory UnifiedDeviceClient.generic({
@@ -100,6 +109,7 @@ class UnifiedDeviceClient {
     int sofDelimiter = ProtocolConstants.sof,
     int eofDelimiter = ProtocolConstants.eof,
     int protocolVersion = ProtocolConstants.currentProtocolVersion,
+    UcpLogMode logMode = UcpLogMode.off,
   }) {
     return UnifiedDeviceClient(
       UnifiedDeviceClientConfig(
@@ -111,6 +121,7 @@ class UnifiedDeviceClient {
         sofDelimiter: sofDelimiter,
         eofDelimiter: eofDelimiter,
         protocolVersion: protocolVersion,
+        logMode: logMode,
       ),
     );
   }
@@ -134,6 +145,8 @@ class UnifiedDeviceClient {
   Stream<DeviceResponse> get dataResponses => _responseManager.dataResponses;
   Stream<DeviceFrame> get streamFrames => _responseManager.streamFrames;
   Stream<UcpPacketTrace> get packetTraces => _responseManager.packetTraces;
+  Stream<DeviceCommunicationLog> get communicationLogs =>
+      _communicationLogController.stream;
 
   Stream<UcpMoistureSample> get moistureSamples => streamFrames
       .where(
@@ -638,7 +651,7 @@ class UnifiedDeviceClient {
     _throwIfNotConnected();
     _throwIfCommandBlocked(commandClass, commandId);
 
-    return _responseManager.sendCommand(
+    final response = await _responseManager.sendCommand(
       commandId: commandId,
       productId: productId,
       profileId: profileId,
@@ -653,6 +666,8 @@ class UnifiedDeviceClient {
           ? options
           : options.copyWith(ackTimeout: timeout, dataTimeout: timeout),
     );
+    _emitCommandResultLog(response);
+    return response;
   }
 
   Future<void> sendFrame(DeviceFrame frame) async {
@@ -689,6 +704,7 @@ class UnifiedDeviceClient {
     await _sessionManager.dispose();
     _responseManager.dispose();
     await _transport.dispose();
+    await _communicationLogController.dispose();
   }
 
   void _throwIfDisposed() {
@@ -768,5 +784,251 @@ class UnifiedDeviceClient {
     if (value < 0 || value > 255) {
       throw ArgumentError('$name must be 0-255, but got $value');
     }
+  }
+
+  void _handleInternalLogEvent(
+    String event,
+    Map<String, dynamic> param,
+    UcpLogMode minimumMode,
+  ) {
+    if (!_shouldEmit(minimumMode)) {
+      return;
+    }
+    final session = currentSession;
+    final sessionId =
+        (param['sessionId'] as String?) ??
+        session?.sessionId ??
+        'session_${DateTime.now().millisecondsSinceEpoch}';
+    final log = DeviceCommunicationLog(
+      logId: _newLogId(),
+      sessionId: sessionId,
+      deviceId: (param['deviceId'] as String?) ?? session?.deviceId,
+      deviceName: (param['deviceName'] as String?) ?? session?.deviceName,
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+      param: _normalizeParam(param),
+    );
+    _communicationLogController.add(log);
+  }
+
+  void _emitCommandResultLog(DeviceResponse response) {
+    _handleInternalLogEvent('command_result', <String, dynamic>{
+      'event': 'command_result',
+      'level': 'info',
+      'layer': 'ucp',
+      'result': response.isAck
+          ? 'ack'
+          : response.isNack
+          ? 'nack'
+          : 'data',
+      'seq': response.sequence,
+      'op': response.op,
+      'opName': _opName(response.op),
+      'classId': response.commandClass,
+      'className': _className(response.commandClass),
+      'cmdId': response.commandId,
+      'cmdName': _commandName(response.commandClass, response.commandId),
+      'src': response.sourceAddress,
+      'dst': response.destinationAddress,
+      'flags': response.flags,
+      'payloadLength': response.payload.length,
+    }, UcpLogMode.basic);
+  }
+
+  bool _shouldEmit(UcpLogMode minimumMode) {
+    return _config.logMode != UcpLogMode.off &&
+        _config.logMode.index >= minimumMode.index;
+  }
+
+  String _newLogId() {
+    _logCounter++;
+    return 'log_${DateTime.now().millisecondsSinceEpoch}_$_logCounter';
+  }
+
+  Map<String, dynamic> _normalizeParam(Map<String, dynamic> param) {
+    final normalized = <String, dynamic>{};
+    for (final entry in param.entries) {
+      if (entry.key == 'sessionId' ||
+          entry.key == 'deviceId' ||
+          entry.key == 'deviceName') {
+        continue;
+      }
+      if (_config.logMode != UcpLogMode.raw &&
+          (entry.key == 'bytesHex' || entry.key == 'tlvs')) {
+        continue;
+      }
+      normalized[entry.key] = _jsonSafeValue(entry.value);
+    }
+    return normalized;
+  }
+
+  Object? _jsonSafeValue(Object? value) {
+    if (value == null || value is num || value is bool || value is String) {
+      return value;
+    }
+    if (value is List<int>) {
+      return value
+          .map((byte) => byte.toRadixString(16).toUpperCase().padLeft(2, '0'))
+          .join(' ');
+    }
+    if (value is List) {
+      return value.map(_jsonSafeValue).toList(growable: false);
+    }
+    if (value is Map) {
+      return value.map((key, item) => MapEntry('$key', _jsonSafeValue(item)));
+    }
+    return '$value';
+  }
+
+  String _opName(int op) {
+    switch (op) {
+      case OperationCodes.req:
+        return 'REQ';
+      case OperationCodes.ack:
+        return 'ACK';
+      case OperationCodes.nack:
+        return 'NACK';
+      case OperationCodes.data:
+        return 'DATA';
+      case OperationCodes.event:
+        return 'EVENT';
+      case OperationCodes.stream:
+        return 'STREAM';
+      case OperationCodes.heartbeat:
+        return 'HEARTBEAT';
+      default:
+        return '0x${op.toRadixString(16).toUpperCase().padLeft(2, '0')}';
+    }
+  }
+
+  String _className(int commandClass) {
+    switch (commandClass) {
+      case CommandClasses.system:
+        return 'SYSTEM';
+      case CommandClasses.session:
+        return 'SESSION';
+      case CommandClasses.measurement:
+        return 'MEASUREMENT';
+      case CommandClasses.report:
+        return 'REPORT';
+      case CommandClasses.moisture:
+        return 'MOISTURE';
+      case CommandClasses.ui:
+        return 'UI';
+      case CommandClasses.connectivity:
+        return 'CONNECTIVITY';
+      case CommandClasses.calibration:
+        return 'CALIBRATION';
+      case CommandClasses.configuration:
+        return 'CONFIGURATION';
+      case CommandClasses.fileTransfer:
+        return 'FILE_TRANSFER';
+      default:
+        return '0x${commandClass.toRadixString(16).toUpperCase().padLeft(2, '0')}';
+    }
+  }
+
+  String _commandName(int commandClass, int commandId) {
+    if (commandClass == CommandClasses.system) {
+      if (commandId == SystemCommandIds.time) {
+        return 'time';
+      }
+      if (commandId == SystemCommandIds.deviceInfo) {
+        return 'device_info';
+      }
+    }
+    if (commandClass == CommandClasses.session) {
+      if (commandId == SessionCommandIds.sessionOpenRtcSync) {
+        return 'session_open_rtc_sync';
+      }
+      if (commandId == SessionCommandIds.sessionClose) {
+        return 'session_close';
+      }
+      if (commandId == SessionCommandIds.heartbeat) {
+        return 'heartbeat';
+      }
+      if (commandId == SessionCommandIds.btTransportOpen) {
+        return 'bt_transport_open';
+      }
+    }
+    if (commandClass == CommandClasses.measurement) {
+      if (commandId == MeasurementCommandIds.startTest) {
+        return 'start_test';
+      }
+      if (commandId == MeasurementCommandIds.stopTest) {
+        return 'stop_test';
+      }
+      if (commandId == MeasurementCommandIds.manTestPermit) {
+        return 'man_test_permit';
+      }
+    }
+    if (commandClass == CommandClasses.report) {
+      if (commandId == ReportCommandIds.lastReport) {
+        return 'last_report';
+      }
+      if (commandId == ReportHistoryCommandIds.reportList) {
+        return 'report_list';
+      }
+      if (commandId == ReportHistoryCommandIds.reportGet) {
+        return 'report_get';
+      }
+      if (commandId == ReportHistoryCommandIds.reportDelete) {
+        return 'report_delete';
+      }
+      if (commandId == ReportHistoryCommandIds.reportExport) {
+        return 'report_export';
+      }
+    }
+    if (commandClass == CommandClasses.moisture) {
+      if (commandId == MoistureCommandIds.moistGetOn) {
+        return 'moist_get_on';
+      }
+      if (commandId == MoistureCommandIds.moistGetOff) {
+        return 'moist_get_off';
+      }
+    }
+    if (commandClass == CommandClasses.ui && commandId == UiCommandIds.font) {
+      return 'font';
+    }
+    if (commandClass == CommandClasses.connectivity &&
+        commandId == ConnectivityCommandIds.cdn) {
+      return 'cdn';
+    }
+    if (commandClass == CommandClasses.calibration) {
+      if (commandId == CalibrationCommandIds.calibrationStart) {
+        return 'calibration_start';
+      }
+      if (commandId == CalibrationCommandIds.calibrationStatus) {
+        return 'calibration_status';
+      }
+      if (commandId == CalibrationCommandIds.calibrationApply) {
+        return 'calibration_apply';
+      }
+    }
+    if (commandClass == CommandClasses.configuration) {
+      if (commandId == ConfigurationCommandIds.configRead) {
+        return 'config_read';
+      }
+      if (commandId == ConfigurationCommandIds.configWrite) {
+        return 'config_write';
+      }
+      if (commandId == ConfigurationCommandIds.configList) {
+        return 'config_list';
+      }
+    }
+    if (commandClass == CommandClasses.fileTransfer) {
+      if (commandId == FileTransferCommandIds.fileTransferStart) {
+        return 'file_transfer_start';
+      }
+      if (commandId == FileTransferCommandIds.fileTransferChunk) {
+        return 'file_transfer_chunk';
+      }
+      if (commandId == FileTransferCommandIds.fileTransferEnd) {
+        return 'file_transfer_end';
+      }
+      if (commandId == FileTransferCommandIds.fileTransferStatus) {
+        return 'file_transfer_status';
+      }
+    }
+    return '0x${commandId.toRadixString(16).toUpperCase().padLeft(2, '0')}';
   }
 }

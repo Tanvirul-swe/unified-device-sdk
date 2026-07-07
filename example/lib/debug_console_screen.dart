@@ -68,7 +68,10 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
     super.initState();
     _platform = widget.platform ?? UnifiedDevicePlatform.instance;
     _client = UnifiedDeviceClient(
-      UnifiedDeviceClientConfig(transport: BleTransport(platform: _platform)),
+      UnifiedDeviceClientConfig(
+        transport: BleTransport(platform: _platform),
+        logMode: UcpLogMode.raw,
+      ),
     );
     _subscriptions = <StreamSubscription<dynamic>>[
       _client.discoveredDevices.listen(_handleDevice),
@@ -76,6 +79,7 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
       _client.packetTraces.listen(_handleTrace),
       _client.events.listen(_handleEvent),
       _client.moistureSamples.listen(_handleMoistureSample),
+      _client.communicationLogs.listen(_handleCommunicationLog),
     ];
 
     if (widget.enablePlatformBootstrap) {
@@ -316,6 +320,10 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
         _packetTraces.removeLast();
       }
     });
+  }
+
+  void _handleCommunicationLog(DeviceCommunicationLog log) {
+    debugPrint('SDK communication log: ${log.toJson()}');
   }
 
   void _handleEvent(DeviceEvent event) {

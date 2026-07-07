@@ -7,6 +7,7 @@ import '../response/device_response.dart';
 import '../response/response_manager.dart';
 import '../transport/connection_state.dart';
 import '../transport/device_transport.dart';
+import '../../logging/ucp_log_mode.dart';
 import '../../protocol/commands/command_options.dart';
 import '../../protocol/constants/ble_constants.dart';
 import '../../protocol/constants/command_classes.dart';
@@ -38,16 +39,21 @@ class UcpSessionManager {
   Completer<void>? _disconnectCompleter;
   bool _bootstrapStarted = false;
   bool _isDisposed = false;
+  String? _pendingSessionId;
 
   // Heartbeat
   Timer? _heartbeatTimer;
   Timer? _heartbeatTimeoutTimer;
   int _missedHeartbeats = 0;
   static const int _maxMissedHeartbeats = 3;
+  int _sessionCounter = 0;
+  void Function(String event, Map<String, dynamic> param, UcpLogMode mode)?
+  onLogEvent;
 
   UcpSessionManager({
     required DeviceTransport transport,
     required UcpResponseManager responseManager,
+    this.onLogEvent,
   }) : _transport = transport,
        _responseManager = responseManager {
     _bind();
@@ -149,6 +155,17 @@ class UcpSessionManager {
       ..safeDisconnectPending = true
       ..measurementActive = false
       ..streamActive = false;
+    _emitLog('session_close_started', <String, dynamic>{
+      'level': 'info',
+      'layer': 'ucp',
+      'state': 'closing',
+      'message': 'Graceful session close requested',
+    }, UcpLogMode.basic);
+    _emitLog('safe_disconnect_pending', <String, dynamic>{
+      'level': 'info',
+      'layer': 'ucp',
+      'state': DeviceConnectionState.safeDisconnectPending.name,
+    }, UcpLogMode.basic);
     _updateState(DeviceConnectionState.safeDisconnectPending);
     _disconnectCompleter ??= Completer<void>();
 
@@ -208,28 +225,53 @@ class UcpSessionManager {
       case DeviceConnectionState.disconnecting:
       case DeviceConnectionState.servicesDiscovered:
       case DeviceConnectionState.notifySubscribed:
+        _pendingSessionId ??= _newSessionId();
+        _emitStateLog(state);
         _updateState(state);
         break;
       case DeviceConnectionState.connected:
         _currentSession = UnifiedDeviceSession(
+          sessionId: _pendingSessionId ?? _newSessionId(),
           deviceId: _transport.connectedDeviceId ?? 'unknown',
-          deviceName: BleConstants.defaultDeviceName,
+          deviceName:
+              _transport.connectedDeviceName ?? BleConstants.defaultDeviceName,
           state: DeviceConnectionState.connected,
         );
         _bootstrapStarted = false;
+        _emitStateLog(DeviceConnectionState.connected);
         _updateState(DeviceConnectionState.connected);
         break;
       case DeviceConnectionState.mtuReady:
-        _updateState(DeviceConnectionState.mtuReady);
-        unawaited(_startBootstrapIfNeeded());
+        if (_shouldApplyTransportState(state)) {
+          _emitStateLog(
+            state,
+            extra: <String, dynamic>{'mtu': _transport.negotiatedMtu},
+          );
+          _updateState(DeviceConnectionState.mtuReady);
+          unawaited(_startBootstrapIfNeeded());
+        }
         break;
       case DeviceConnectionState.error:
+        _emitLog('error', <String, dynamic>{
+          'level': 'error',
+          'layer': 'ble',
+          'state': state.name,
+          'message': 'BLE transport reported an error state',
+        }, UcpLogMode.errorOnly);
         _updateState(DeviceConnectionState.error);
         break;
       case DeviceConnectionState.disconnected:
       case DeviceConnectionState.connectionLost:
         _stopHeartbeat();
+        _emitDisconnectionLog(state);
+        _emitLog('reconnect_cleanup', <String, dynamic>{
+          'level': 'info',
+          'layer': 'ble',
+          'state': state.name,
+          'message': 'Session state reset after disconnect',
+        }, UcpLogMode.basic);
         _currentSession = null;
+        _pendingSessionId = null;
         _bootstrapStarted = false;
         _updateState(state);
         _disconnectCompleter?.complete();
@@ -296,18 +338,46 @@ class UcpSessionManager {
 
   Future<void> _runBootstrap(Completer<void> completer) async {
     try {
+      _emitLog('transport_open_started', <String, dynamic>{
+        'level': 'info',
+        'layer': 'ucp',
+        'state': 'bootstrapping',
+      }, UcpLogMode.basic);
       await openTransport();
+      _emitLog('transport_ready', <String, dynamic>{
+        'level': 'info',
+        'layer': 'ucp',
+        'state': DeviceConnectionState.transportReady.name,
+      }, UcpLogMode.basic);
       _updateState(DeviceConnectionState.transportReady);
+      _emitLog('session_open_started', <String, dynamic>{
+        'level': 'info',
+        'layer': 'ucp',
+        'state': 'bootstrapping',
+      }, UcpLogMode.basic);
       await openRtcSession();
       if (_currentSession != null) {
         _currentSession!
           ..sessionActive = true
           ..safeDisconnectPending = false;
       }
+      _emitLog('session_active', <String, dynamic>{
+        'level': 'info',
+        'layer': 'ucp',
+        'state': DeviceConnectionState.sessionActive.name,
+      }, UcpLogMode.basic);
       _updateState(DeviceConnectionState.sessionActive);
       _startHeartbeat();
       completer.complete();
     } catch (error, stackTrace) {
+      _emitLog('handshake_failed', <String, dynamic>{
+        'level': 'error',
+        'layer': 'ucp',
+        'state': _state.name,
+        'message': '$error',
+        if (stackTrace.toString().isNotEmpty)
+          'stackTrace': stackTrace.toString(),
+      }, UcpLogMode.errorOnly);
       if (!completer.isCompleted) {
         completer.completeError(error, stackTrace);
       }
@@ -424,6 +494,13 @@ class UcpSessionManager {
 
   void _onHeartbeatMissed() {
     _stopHeartbeat();
+    _emitLog('error', <String, dynamic>{
+      'level': 'error',
+      'layer': 'ucp',
+      'state': DeviceConnectionState.connectionLost.name,
+      'message': 'Heartbeat threshold exceeded',
+      'missedHeartbeats': _missedHeartbeats,
+    }, UcpLogMode.errorOnly);
     _updateState(DeviceConnectionState.connectionLost);
     unawaited(_transport.disconnect());
   }
@@ -469,5 +546,71 @@ class UcpSessionManager {
     await _eventSubscription?.cancel();
     await _streamSubscription?.cancel();
     await _stateController.close();
+  }
+
+  String _newSessionId() {
+    _sessionCounter++;
+    return 'session_${DateTime.now().millisecondsSinceEpoch}_$_sessionCounter';
+  }
+
+  void _emitStateLog(
+    DeviceConnectionState state, {
+    Map<String, dynamic> extra = const <String, dynamic>{},
+  }) {
+    final event = switch (state) {
+      DeviceConnectionState.scanning => 'scanning',
+      DeviceConnectionState.connecting => 'connecting',
+      DeviceConnectionState.connected => 'connected',
+      DeviceConnectionState.servicesDiscovered => 'services_discovered',
+      DeviceConnectionState.notifySubscribed => 'notify_subscribed',
+      DeviceConnectionState.mtuReady => 'mtu_ready',
+      DeviceConnectionState.disconnecting => 'disconnecting',
+      _ => state.name,
+    };
+    _emitLog(event, <String, dynamic>{
+      'level': 'info',
+      'layer': 'ble',
+      'state': state.name,
+      ...extra,
+    }, UcpLogMode.basic);
+  }
+
+  void _emitDisconnectionLog(DeviceConnectionState state) {
+    _emitLog(
+      'disconnected',
+      <String, dynamic>{
+        'level': state == DeviceConnectionState.connectionLost
+            ? 'error'
+            : 'info',
+        'layer': 'ble',
+        'state': state.name,
+        'message': state == DeviceConnectionState.connectionLost
+            ? 'BLE connection lost unexpectedly'
+            : 'BLE connection closed',
+      },
+      state == DeviceConnectionState.connectionLost
+          ? UcpLogMode.errorOnly
+          : UcpLogMode.basic,
+    );
+  }
+
+  void _emitLog(
+    String event,
+    Map<String, dynamic> param,
+    UcpLogMode minimumMode,
+  ) {
+    final callback = onLogEvent;
+    if (callback == null) {
+      return;
+    }
+    final session = _currentSession;
+    callback(event, <String, dynamic>{
+      'event': event,
+      ...param,
+      if (session?.sessionId != null || _pendingSessionId != null)
+        'sessionId': session?.sessionId ?? _pendingSessionId,
+      if (session != null) 'deviceId': session.deviceId,
+      if (session?.deviceName != null) 'deviceName': session!.deviceName,
+    }, minimumMode);
   }
 }

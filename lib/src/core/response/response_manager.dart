@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import '../errors/crc_exception.dart';
+import '../errors/frame_exception.dart';
 import '../errors/protocol_exception.dart';
-import '../errors/timeout_exception.dart';
+import '../errors/timeout_exception.dart' as sdk_errors;
 import '../errors/transport_exception.dart';
 import '../frame/device_frame.dart';
 import '../frame/frame_buffer.dart';
@@ -9,6 +11,7 @@ import '../frame/frame_builder.dart';
 import '../frame/frame_parser.dart';
 import '../transport/connection_state.dart';
 import '../transport/device_transport.dart';
+import '../../logging/ucp_log_mode.dart';
 import '../../protocol/commands/command_options.dart';
 import '../../protocol/constants/command_classes.dart';
 import '../../protocol/constants/operation_codes.dart';
@@ -50,6 +53,8 @@ class UcpResponseManager {
   StreamSubscription<List<int>>? _incomingSubscription;
   StreamSubscription<DeviceConnectionState>? _connectionSubscription;
   bool _isDisposed = false;
+  void Function(String event, Map<String, dynamic> param, UcpLogMode mode)?
+  onLogEvent;
 
   /// Default timeout for command operations.
   final Duration defaultTimeout;
@@ -63,6 +68,7 @@ class UcpResponseManager {
     SequenceGenerator? sequenceGenerator,
     int protocolVersion = 1,
     CommonResponseParser responseParser = const CommonResponseParser(),
+    this.onLogEvent,
   }) : _transport = transport,
        _frameBuilder = frameBuilder ?? FrameBuilder(),
        _frameBuffer = frameBuffer ?? FrameBuffer(),
@@ -71,6 +77,7 @@ class UcpResponseManager {
        _protocolVersion = protocolVersion,
        _responseParser = responseParser,
        _nackParser = NackParser(responseParser: responseParser) {
+    _frameBuffer.onFrameError = _handleFrameBufferError;
     _bindTransport();
   }
 
@@ -257,6 +264,12 @@ class UcpResponseManager {
         inferEventCodeFromPayload: true,
       );
       _emitEvent(event);
+      _emitFrameKindLog(
+        event: 'event_received',
+        frame: frame,
+        minimumMode: UcpLogMode.verbose,
+        extra: <String, dynamic>{'eventCode': event.eventCode},
+      );
       final pending = _pendingRequests[_keyForFrame(frame)];
       if (pending != null && pending.options.completeOnEvent) {
         _pendingRequests.remove(_keyForFrame(frame));
@@ -269,6 +282,11 @@ class UcpResponseManager {
       if (!_streamController.isClosed) {
         _streamController.add(frame);
       }
+      _emitFrameKindLog(
+        event: 'stream_received',
+        frame: frame,
+        minimumMode: UcpLogMode.verbose,
+      );
       return;
     }
 
@@ -287,6 +305,11 @@ class UcpResponseManager {
     }
 
     if (frame.isAck) {
+      _emitFrameKindLog(
+        event: 'ack_received',
+        frame: frame,
+        minimumMode: UcpLogMode.verbose,
+      );
       _handleAck(_keyForFrame(frame), pending, response);
       return;
     }
@@ -297,6 +320,11 @@ class UcpResponseManager {
     }
 
     if (frame.isData) {
+      _emitFrameKindLog(
+        event: 'data_received',
+        frame: frame,
+        minimumMode: UcpLogMode.verbose,
+      );
       _handleData(_keyForFrame(frame), pending, response);
     }
   }
@@ -324,6 +352,19 @@ class UcpResponseManager {
   ) {
     _pendingRequests.remove(key);
     final details = _nackParser.parseDetails(response);
+    _emitLog('nack_received', <String, dynamic>{
+      ..._frameSummary(
+        response.sourceFrame,
+        includeBytesHex: true,
+        includeTlvs: true,
+      ),
+      'level': 'error',
+      'layer': 'ucp',
+      'status': details.status,
+      'errorCode': details.errorCode,
+      'message':
+          details.text ?? response.errorMessage ?? 'Device returned NACK',
+    }, UcpLogMode.errorOnly);
     pending.completeError(
       ProtocolException(
         details.text ?? response.errorMessage ?? 'Device returned NACK',
@@ -377,6 +418,39 @@ class UcpResponseManager {
         decodedTlvs: decodedTlvs,
       ),
     );
+    _emitLog(
+      direction == UcpPacketDirection.tx ? 'packet_tx' : 'packet_rx',
+      <String, dynamic>{
+        'level': 'debug',
+        'layer': 'ucp',
+        'direction': direction.name,
+        ..._frameSummary(
+          resolvedFrame,
+          fallbackBytes: bytes,
+          includeBytesHex: true,
+          includeTlvs: true,
+          decodedTlvs: decodedTlvs,
+        ),
+      },
+      UcpLogMode.verbose,
+    );
+  }
+
+  void _handleFrameBufferError(List<int> bytes, Object error) {
+    final isCrcError = error is CrcException;
+    _emitLog(isCrcError ? 'crc_failed' : 'frame_parse_failed', <
+      String,
+      dynamic
+    >{
+      'level': 'error',
+      'layer': 'ucp',
+      'direction': 'rx',
+      'message': '$error',
+      'bytesHex': _bytesToHex(bytes),
+      if (error is FrameException) 'frameErrorType': error.frameErrorType.name,
+      if (error is CrcException) 'crcExpected': _hex16(error.expectedCrc),
+      if (error is CrcException) 'crcActual': _hex16(error.actualCrc),
+    }, UcpLogMode.errorOnly);
   }
 
   DeviceFrame? _tryParseFrame(List<int> bytes) {
@@ -409,7 +483,7 @@ class UcpResponseManager {
     }
     _pendingRequests.remove(matchedEntry.key);
     matchedEntry.value.completeError(
-      TimeoutException(
+      sdk_errors.TimeoutException(
         'Request cancelled',
         timeoutDuration: Duration.zero,
         operation: 'Request $sequenceNumber',
@@ -425,7 +499,7 @@ class UcpResponseManager {
     _pendingRequests.clear();
     for (final pending in requests.values) {
       pending.completeError(
-        TimeoutException(
+        sdk_errors.TimeoutException(
           'All requests cancelled',
           timeoutDuration: Duration.zero,
           operation: 'Request ${pending.sequence}',
@@ -457,8 +531,9 @@ class UcpResponseManager {
   void _onAckTimeout(PendingRequest request) {
     final key = _keyForPending(request);
     _pendingRequests.remove(key);
+    _emitTimeoutLog(request, stage: 'ack');
     request.completeError(
-      TimeoutException(
+      sdk_errors.TimeoutException(
         'Request ${request.sequence} timed out waiting for ACK',
         timeoutDuration: request.options.ackTimeout,
         operation: 'Request ${request.sequence} ACK',
@@ -469,8 +544,9 @@ class UcpResponseManager {
   void _onDataTimeout(PendingRequest request) {
     final key = _keyForPending(request);
     _pendingRequests.remove(key);
+    _emitTimeoutLog(request, stage: 'data');
     request.completeError(
-      TimeoutException(
+      sdk_errors.TimeoutException(
         'Request ${request.sequence} timed out waiting for DATA',
         timeoutDuration: request.options.dataTimeout,
         operation: 'Request ${request.sequence} DATA',
@@ -484,6 +560,273 @@ class UcpResponseManager {
       commandClass: request.commandClass,
       commandId: request.commandId,
     );
+  }
+
+  void _emitTimeoutLog(PendingRequest request, {required String stage}) {
+    _emitLog('request_timeout', <String, dynamic>{
+      'level': 'error',
+      'layer': 'ucp',
+      'stage': stage,
+      'message':
+          'Request ${request.sequence} timed out waiting for ${stage.toUpperCase()}',
+      'seq': request.sequence,
+      'op': request.op,
+      'opName': _opName(request.op),
+      'classId': request.commandClass,
+      'className': _className(request.commandClass),
+      'cmdId': request.commandId,
+      'cmdName': _commandName(request.commandClass, request.commandId),
+      'src': request.sourceAddress,
+      'dst': request.destinationAddress,
+      'payloadLength': request.payload.length,
+      'timeoutMs':
+          (stage == 'ack'
+                  ? request.options.ackTimeout
+                  : request.options.dataTimeout)
+              .inMilliseconds,
+    }, UcpLogMode.errorOnly);
+  }
+
+  void _emitFrameKindLog({
+    required String event,
+    required DeviceFrame frame,
+    required UcpLogMode minimumMode,
+    Map<String, dynamic> extra = const <String, dynamic>{},
+  }) {
+    _emitLog(event, <String, dynamic>{
+      'level': event == 'nack_received' ? 'error' : 'debug',
+      'layer': 'ucp',
+      'direction': 'rx',
+      ..._frameSummary(frame, includeBytesHex: true, includeTlvs: true),
+      ...extra,
+    }, minimumMode);
+  }
+
+  void _emitLog(
+    String event,
+    Map<String, dynamic> param,
+    UcpLogMode minimumMode,
+  ) {
+    final callback = onLogEvent;
+    if (callback == null) {
+      return;
+    }
+    callback(event, <String, dynamic>{'event': event, ...param}, minimumMode);
+  }
+
+  Map<String, dynamic> _frameSummary(
+    DeviceFrame? frame, {
+    List<int>? fallbackBytes,
+    bool includeBytesHex = false,
+    bool includeTlvs = false,
+    List<DecodedTlv>? decodedTlvs,
+  }) {
+    if (frame == null) {
+      return <String, dynamic>{
+        'bytesLength': fallbackBytes?.length ?? 0,
+        if (includeBytesHex && fallbackBytes != null)
+          'bytesHex': _bytesToHex(fallbackBytes),
+      };
+    }
+
+    final resolvedTlvs = decodedTlvs ?? decodeTlvs(frame);
+    return <String, dynamic>{
+      'op': frame.op,
+      'opName': _opName(frame.op),
+      'classId': frame.commandClass,
+      'className': _className(frame.commandClass),
+      'cmdId': frame.commandId,
+      'cmdName': _commandName(frame.commandClass, frame.commandId),
+      'seq': frame.sequence,
+      'src': frame.sourceAddress,
+      'dst': frame.destinationAddress,
+      'flags': frame.flags,
+      'payloadLength': frame.payloadLength,
+      'crc': _hex16(frame.crc),
+      'tlvCount': resolvedTlvs.length,
+      if (includeBytesHex)
+        'bytesHex': _bytesToHex(
+          fallbackBytes ?? _frameBuilder.buildFromFrame(frame),
+        ),
+      if (includeTlvs) 'tlvs': _serializeTlvs(resolvedTlvs),
+    };
+  }
+
+  List<Map<String, dynamic>> _serializeTlvs(List<DecodedTlv> tlvs) {
+    return tlvs
+        .map(
+          (tlv) => <String, dynamic>{
+            'type': tlv.type,
+            'typeHex':
+                '0x${tlv.type.toRadixString(16).toUpperCase().padLeft(2, '0')}',
+            'typeName': tlv.typeName,
+            'length': tlv.length,
+            'value': _jsonSafeValue(tlv.value),
+          },
+        )
+        .toList(growable: false);
+  }
+
+  Object? _jsonSafeValue(Object? value) {
+    if (value == null || value is num || value is bool || value is String) {
+      return value;
+    }
+    if (value is List<int>) {
+      return _bytesToHex(value);
+    }
+    if (value is List) {
+      return value.map(_jsonSafeValue).toList(growable: false);
+    }
+    if (value is Map) {
+      return value.map((key, item) => MapEntry('$key', _jsonSafeValue(item)));
+    }
+    return '$value';
+  }
+
+  String _opName(int op) {
+    switch (op) {
+      case OperationCodes.req:
+        return 'REQ';
+      case OperationCodes.ack:
+        return 'ACK';
+      case OperationCodes.nack:
+        return 'NACK';
+      case OperationCodes.data:
+        return 'DATA';
+      case OperationCodes.event:
+        return 'EVENT';
+      case OperationCodes.stream:
+        return 'STREAM';
+      case OperationCodes.heartbeat:
+        return 'HEARTBEAT';
+      default:
+        return '0x${op.toRadixString(16).toUpperCase().padLeft(2, '0')}';
+    }
+  }
+
+  String _className(int commandClass) {
+    switch (commandClass) {
+      case CommandClasses.system:
+        return 'SYSTEM';
+      case CommandClasses.session:
+        return 'SESSION';
+      case CommandClasses.measurement:
+        return 'MEASUREMENT';
+      case CommandClasses.report:
+        return 'REPORT';
+      case CommandClasses.moisture:
+        return 'MOISTURE';
+      case CommandClasses.ui:
+        return 'UI';
+      case CommandClasses.connectivity:
+        return 'CONNECTIVITY';
+      case CommandClasses.calibration:
+        return 'CALIBRATION';
+      case CommandClasses.configuration:
+        return 'CONFIGURATION';
+      case CommandClasses.fileTransfer:
+        return 'FILE_TRANSFER';
+      default:
+        return '0x${commandClass.toRadixString(16).toUpperCase().padLeft(2, '0')}';
+    }
+  }
+
+  String _commandName(int commandClass, int commandId) {
+    switch (commandClass) {
+      case CommandClasses.system:
+        switch (commandId) {
+          case 0x01:
+            return 'time';
+          case 0x02:
+            return 'device_info';
+        }
+      case CommandClasses.session:
+        switch (commandId) {
+          case 0x01:
+            return 'session_open_rtc_sync';
+          case 0x02:
+            return 'session_close';
+          case 0x03:
+            return 'heartbeat';
+          case 0x04:
+            return 'bt_transport_open';
+        }
+      case CommandClasses.measurement:
+        switch (commandId) {
+          case 0x01:
+            return 'start_test';
+          case 0x02:
+            return 'stop_test';
+          case 0x03:
+            return 'man_test_permit';
+        }
+      case CommandClasses.report:
+        switch (commandId) {
+          case 0x01:
+            return 'last_report';
+          case 0x02:
+            return 'report_get';
+          case 0x03:
+            return 'report_delete';
+          case 0x04:
+            return 'report_export';
+        }
+      case CommandClasses.moisture:
+        switch (commandId) {
+          case 0x01:
+            return 'moist_get_on';
+          case 0x02:
+            return 'moist_get_off';
+        }
+      case CommandClasses.ui:
+        if (commandId == 0x01) {
+          return 'font';
+        }
+      case CommandClasses.connectivity:
+        if (commandId == 0x01) {
+          return 'cdn';
+        }
+      case CommandClasses.calibration:
+        switch (commandId) {
+          case 0x01:
+            return 'calibration_start';
+          case 0x02:
+            return 'calibration_status';
+          case 0x03:
+            return 'calibration_apply';
+        }
+      case CommandClasses.configuration:
+        switch (commandId) {
+          case 0x01:
+            return 'config_read';
+          case 0x02:
+            return 'config_write';
+          case 0x03:
+            return 'config_list';
+        }
+      case CommandClasses.fileTransfer:
+        switch (commandId) {
+          case 0x01:
+            return 'file_transfer_start';
+          case 0x02:
+            return 'file_transfer_chunk';
+          case 0x03:
+            return 'file_transfer_end';
+          case 0x04:
+            return 'file_transfer_status';
+        }
+    }
+    return '0x${commandId.toRadixString(16).toUpperCase().padLeft(2, '0')}';
+  }
+
+  String _bytesToHex(List<int> bytes) {
+    return bytes
+        .map((byte) => byte.toRadixString(16).toUpperCase().padLeft(2, '0'))
+        .join(' ');
+  }
+
+  String _hex16(int value) {
+    return value.toRadixString(16).toUpperCase().padLeft(4, '0');
   }
 
   /// Disposes the manager and cancels all pending requests.

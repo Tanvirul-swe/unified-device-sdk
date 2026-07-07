@@ -2,6 +2,9 @@ import '../transport/connection_state.dart';
 
 /// Represents an active session with a connected device.
 class UnifiedDeviceSession {
+  /// Runtime-generated BLE connection session identifier.
+  final String sessionId;
+
   /// The ID of the connected device.
   final String deviceId;
 
@@ -28,6 +31,7 @@ class UnifiedDeviceSession {
 
   /// Creates a [UnifiedDeviceSession].
   UnifiedDeviceSession({
+    required this.sessionId,
     required this.deviceId,
     this.deviceName,
     DateTime? startedAt,
@@ -48,7 +52,8 @@ class UnifiedDeviceSession {
 
   @override
   String toString() {
-    return 'UnifiedDeviceSession(device: $deviceId, name: $deviceName, '
+    return 'UnifiedDeviceSession(sessionId: $sessionId, device: $deviceId, '
+        'name: $deviceName, '
         'state: $state, sessionActive: $sessionActive, '
         'measurementActive: $measurementActive, streamActive: $streamActive, '
         'safeDisconnectPending: $safeDisconnectPending, duration: $duration)';

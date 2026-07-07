@@ -64,8 +64,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool get _streamActive => _client.currentSession?.streamActive ?? false;
 
   bool get _canRetryBootstrap =>
-      _connectionState == DeviceConnectionState.connected &&
-      !_sessionReady;
+      _connectionState == DeviceConnectionState.connected && !_sessionReady;
 
   bool get _busy => _pendingActions > 0;
 
@@ -75,7 +74,10 @@ class _DashboardScreenState extends State<DashboardScreen>
     _tabController = TabController(length: 2, vsync: this);
     _platform = widget.platform ?? UnifiedDevicePlatform.instance;
     _client = UnifiedDeviceClient(
-      UnifiedDeviceClientConfig(transport: BleTransport(platform: _platform)),
+      UnifiedDeviceClientConfig(
+        transport: BleTransport(platform: _platform),
+        logMode: UcpLogMode.raw,
+      ),
     );
     _subscriptions = <StreamSubscription<dynamic>>[
       _client.discoveredDevices.listen(_handleDevice),
@@ -83,6 +85,7 @@ class _DashboardScreenState extends State<DashboardScreen>
       _client.packetTraces.listen(_handleTrace),
       _client.events.listen(_handleEvent),
       _client.moistureSamples.listen(_handleMoistureSample),
+      _client.communicationLogs.listen(_handleCommunicationLog),
     ];
 
     if (widget.enablePlatformBootstrap) {
@@ -281,7 +284,10 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   void _addLog(LogLevel level, String message) {
     setState(() {
-      _logEntries.insert(0, LogEntry(level: level, message: message, timestamp: DateTime.now()));
+      _logEntries.insert(
+        0,
+        LogEntry(level: level, message: message, timestamp: DateTime.now()),
+      );
       if (_logEntries.length > _maxLogItems) {
         _logEntries.removeLast();
       }
@@ -341,6 +347,10 @@ class _DashboardScreenState extends State<DashboardScreen>
     });
   }
 
+  void _handleCommunicationLog(DeviceCommunicationLog log) {
+    debugPrint('SDK communication log: ${log.toJson()}');
+  }
+
   void _handleEvent(DeviceEvent event) {
     final frame = event.sourceFrame;
     if (frame == null) {
@@ -354,7 +364,9 @@ class _DashboardScreenState extends State<DashboardScreen>
     final decoded = _client.responseManager.decodeTlvs(frame);
     final detail = decoded.isEmpty
         ? 'no TLVs'
-        : decoded.map((tlv) => '${tlv.typeName}=${tlv.displayValue}').join(', ');
+        : decoded
+              .map((tlv) => '${tlv.typeName}=${tlv.displayValue}')
+              .join(', ');
     _addLog(
       LogLevel.event,
       'Event: class=0x${frame.commandClass.toRadixString(16).toUpperCase()} '
@@ -372,8 +384,9 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   bool _isTargetDevice(DiscoveredDevice device) {
     final matchesName = device.name == BleConstants.defaultDeviceName;
-    final matchesService =
-        device.serviceUuids.any((uuid) => uuid.toUpperCase().contains(BleConstants.deviceService));
+    final matchesService = device.serviceUuids.any(
+      (uuid) => uuid.toUpperCase().contains(BleConstants.deviceService),
+    );
     return matchesName || matchesService;
   }
 
@@ -465,11 +478,35 @@ class _DashboardScreenState extends State<DashboardScreen>
               }
             },
             itemBuilder: (context) => [
-              const PopupMenuItem(value: 'refresh', child: ListTile(leading: Icon(Icons.refresh), title: Text('Refresh Status'))),
+              const PopupMenuItem(
+                value: 'refresh',
+                child: ListTile(
+                  leading: Icon(Icons.refresh),
+                  title: Text('Refresh Status'),
+                ),
+              ),
               const PopupMenuDivider(),
-              const PopupMenuItem(value: 'copy', child: ListTile(leading: Icon(Icons.copy_all), title: Text('Copy Trace'))),
-              const PopupMenuItem(value: 'export', child: ListTile(leading: Icon(Icons.ios_share), title: Text('Export Trace'))),
-              const PopupMenuItem(value: 'clear', child: ListTile(leading: Icon(Icons.delete_outline), title: Text('Clear All'))),
+              const PopupMenuItem(
+                value: 'copy',
+                child: ListTile(
+                  leading: Icon(Icons.copy_all),
+                  title: Text('Copy Trace'),
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'export',
+                child: ListTile(
+                  leading: Icon(Icons.ios_share),
+                  title: Text('Export Trace'),
+                ),
+              ),
+              const PopupMenuItem(
+                value: 'clear',
+                child: ListTile(
+                  leading: Icon(Icons.delete_outline),
+                  title: Text('Clear All'),
+                ),
+              ),
             ],
           ),
         ],

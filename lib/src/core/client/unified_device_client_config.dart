@@ -1,4 +1,5 @@
 import '../transport/device_transport.dart';
+import '../../logging/ucp_log_mode.dart';
 import '../../protocol/constants/protocol_constants.dart';
 
 /// Configuration for the [UnifiedDeviceClient].
@@ -27,6 +28,9 @@ class UnifiedDeviceClientConfig {
   /// The protocol version to use.
   final int protocolVersion;
 
+  /// Controls how much communication detail the SDK emits.
+  final UcpLogMode logMode;
+
   /// Creates a [UnifiedDeviceClientConfig] with the given parameters.
   const UnifiedDeviceClientConfig({
     required this.transport,
@@ -37,5 +41,6 @@ class UnifiedDeviceClientConfig {
     this.sofDelimiter = ProtocolConstants.sof,
     this.eofDelimiter = ProtocolConstants.eof,
     this.protocolVersion = ProtocolConstants.currentProtocolVersion,
+    this.logMode = UcpLogMode.off,
   });
 }

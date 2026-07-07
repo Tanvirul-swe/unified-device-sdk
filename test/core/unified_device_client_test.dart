@@ -76,67 +76,81 @@ void main() {
       await transport.dispose();
     });
 
-    test('connect auto-runs official transport and session bootstrap', () async {
-      final states = <DeviceConnectionState>[];
-      final subscription = client.connectionState.listen(states.add);
-      addTearDown(subscription.cancel);
+    test(
+      'connect auto-runs official transport and session bootstrap',
+      () async {
+        final states = <DeviceConnectionState>[];
+        final subscription = client.connectionState.listen(states.add);
+        addTearDown(subscription.cancel);
 
-      final connectFuture = client.connect(
-        DiscoveredDevice(
-          deviceId: 'dev-1',
-          name: BleConstants.defaultDeviceName,
-          rssi: -42,
-        ),
-      );
+        final connectFuture = client.connect(
+          DiscoveredDevice(
+            deviceId: 'dev-1',
+            name: BleConstants.defaultDeviceName,
+            rssi: -42,
+          ),
+        );
 
-      await _completeBootstrap(
-        transport: transport,
-        frameBuilder: frameBuilder,
-        frameParser: frameParser,
-      );
-      await connectFuture;
+        await _completeBootstrap(
+          transport: transport,
+          frameBuilder: frameBuilder,
+          frameParser: frameParser,
+        );
+        await connectFuture;
 
-      final transportOpenRequest = frameParser.parse(transport.writtenData[0]);
-      final sessionOpenRequest = frameParser.parse(transport.writtenData[1]);
+        final transportOpenRequest = frameParser.parse(
+          transport.writtenData[0],
+        );
+        final sessionOpenRequest = frameParser.parse(transport.writtenData[1]);
 
-      expect(transportOpenRequest.commandClass, CommandClasses.session);
-      expect(transportOpenRequest.commandId, SessionCommandIds.btTransportOpen);
-      expect(sessionOpenRequest.commandClass, CommandClasses.session);
-      expect(
-        sessionOpenRequest.commandId,
-        SessionCommandIds.sessionOpenRtcSync,
-      );
-      expect(states, contains(DeviceConnectionState.transportReady));
-      expect(client.isSessionActive, isTrue);
-      expect(
-        client.currentSession?.state,
-        anyOf(
+        expect(transportOpenRequest.commandClass, CommandClasses.session);
+        expect(
+          transportOpenRequest.commandId,
+          SessionCommandIds.btTransportOpen,
+        );
+        expect(sessionOpenRequest.commandClass, CommandClasses.session);
+        expect(
+          sessionOpenRequest.commandId,
+          SessionCommandIds.sessionOpenRtcSync,
+        );
+        expect(states, contains(DeviceConnectionState.transportReady));
+        expect(client.isSessionActive, isTrue);
+        expect(
+          client.currentSession?.state,
+          anyOf(
+            DeviceConnectionState.sessionActive,
+            DeviceConnectionState.measurementActive,
+            DeviceConnectionState.streamActive,
+          ),
+        );
+      },
+    );
+
+    test(
+      'ignores late mtuReady updates after session bootstrap completes',
+      () async {
+        final states = <DeviceConnectionState>[];
+        final subscription = client.connectionState.listen(states.add);
+        addTearDown(subscription.cancel);
+
+        await _completeBootstrapForClient(
+          client: client,
+          transport: transport,
+          frameBuilder: frameBuilder,
+          frameParser: frameParser,
+        );
+
+        transport.simulateConnectionState(DeviceConnectionState.mtuReady);
+        await _drainQueue();
+
+        expect(client.isSessionActive, isTrue);
+        expect(
+          client.currentSession?.state,
           DeviceConnectionState.sessionActive,
-          DeviceConnectionState.measurementActive,
-          DeviceConnectionState.streamActive,
-        ),
-      );
-    });
-
-    test('ignores late mtuReady updates after session bootstrap completes', () async {
-      final states = <DeviceConnectionState>[];
-      final subscription = client.connectionState.listen(states.add);
-      addTearDown(subscription.cancel);
-
-      await _completeBootstrapForClient(
-        client: client,
-        transport: transport,
-        frameBuilder: frameBuilder,
-        frameParser: frameParser,
-      );
-
-      transport.simulateConnectionState(DeviceConnectionState.mtuReady);
-      await _drainQueue();
-
-      expect(client.isSessionActive, isTrue);
-      expect(client.currentSession?.state, DeviceConnectionState.sessionActive);
-      expect(states.last, DeviceConnectionState.sessionActive);
-    });
+        );
+        expect(states.last, DeviceConnectionState.sessionActive);
+      },
+    );
 
     test('blocks normal commands before sessionActive', () async {
       final connectFuture = client.connect(
@@ -208,6 +222,81 @@ void main() {
       expect(events.single.commandId, SessionCommandIds.heartbeat);
       expect(events.single.eventCode, 0xAB);
     });
+
+    test('emits basic communication logs with a stable session id', () async {
+      await client.dispose();
+      await transport.dispose();
+      transport = FakeTransport();
+      client = UnifiedDeviceClient(
+        UnifiedDeviceClientConfig(
+          transport: transport,
+          logMode: UcpLogMode.basic,
+        ),
+      );
+
+      final logs = <DeviceCommunicationLog>[];
+      final subscription = client.communicationLogs.listen(logs.add);
+      addTearDown(subscription.cancel);
+
+      await _completeBootstrapForClient(
+        client: client,
+        transport: transport,
+        frameBuilder: frameBuilder,
+        frameParser: frameParser,
+      );
+      await _drainQueue();
+
+      expect(logs, isNotEmpty);
+      expect(
+        logs.map((log) => log.param['event']),
+        containsAll(<String>[
+          'connected',
+          'mtu_ready',
+          'transport_ready',
+          'session_active',
+        ]),
+      );
+      expect(logs.map((log) => log.sessionId).toSet(), hasLength(1));
+      expect(logs.every((log) => log.deviceId == 'dev-1'), isTrue);
+      expect(
+        logs.every((log) => log.deviceName == BleConstants.defaultDeviceName),
+        isTrue,
+      );
+    });
+
+    test(
+      'emits raw packet details when raw communication logging is enabled',
+      () async {
+        await client.dispose();
+        await transport.dispose();
+        transport = FakeTransport();
+        client = UnifiedDeviceClient(
+          UnifiedDeviceClientConfig(
+            transport: transport,
+            logMode: UcpLogMode.raw,
+          ),
+        );
+
+        final logs = <DeviceCommunicationLog>[];
+        final subscription = client.communicationLogs.listen(logs.add);
+        addTearDown(subscription.cancel);
+
+        await _completeBootstrapForClient(
+          client: client,
+          transport: transport,
+          frameBuilder: frameBuilder,
+          frameParser: frameParser,
+        );
+        await _drainQueue();
+
+        final packetLog = logs.firstWhere(
+          (log) => log.param['event'] == 'packet_tx',
+        );
+
+        expect(packetLog.param['bytesHex'], isA<String>());
+        expect(packetLog.param['tlvs'], isA<List<dynamic>>());
+      },
+    );
   });
 }
 

@@ -9,6 +9,11 @@ export 'src/core/client/unified_device_client_config.dart';
 export 'src/core/client/ucp_session_manager.dart';
 export 'src/core/client/unified_device_session.dart';
 
+// Logging exports
+export 'src/logging/device_communication_log.dart';
+export 'src/logging/device_communication_log_controller.dart';
+export 'src/logging/ucp_log_mode.dart';
+
 // Core exports - Transport
 export 'src/core/transport/device_transport.dart';
 export 'src/core/transport/ble_transport.dart';

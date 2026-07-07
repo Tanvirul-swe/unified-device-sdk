@@ -14,6 +14,7 @@ class FakeTransport implements DeviceTransport {
 
   DeviceConnectionState _connectionState = DeviceConnectionState.disconnected;
   String? _connectedDeviceId;
+  String? _connectedDeviceName;
   bool _isScanning = false;
   bool _isDisposed = false;
 
@@ -43,6 +44,9 @@ class FakeTransport implements DeviceTransport {
   String? get connectedDeviceId => _connectedDeviceId;
 
   @override
+  String? get connectedDeviceName => _connectedDeviceName;
+
+  @override
   int get negotiatedMtu => _negotiatedMtu;
 
   int _negotiatedMtu = 0;
@@ -64,6 +68,9 @@ class FakeTransport implements DeviceTransport {
     }
     _connectionState = DeviceConnectionState.connected;
     _connectedDeviceId = device.deviceId;
+    _connectedDeviceName = device.name;
+    _connectionStateController.add(_connectionState);
+    _connectionState = DeviceConnectionState.mtuReady;
     _connectionStateController.add(_connectionState);
   }
 
@@ -71,6 +78,7 @@ class FakeTransport implements DeviceTransport {
   Future<void> disconnect() async {
     _connectionState = DeviceConnectionState.disconnected;
     _connectedDeviceId = null;
+    _connectedDeviceName = null;
     _connectionStateController.add(_connectionState);
   }
 
@@ -94,6 +102,7 @@ class FakeTransport implements DeviceTransport {
     _isScanning = false;
     _connectionState = DeviceConnectionState.disconnected;
     _connectedDeviceId = null;
+    _connectedDeviceName = null;
   }
 
   /// Simulates receiving data from a device.
@@ -115,6 +124,9 @@ class FakeTransport implements DeviceTransport {
     _connectedDeviceId = state == DeviceConnectionState.connected
         ? deviceId
         : null;
+    if (state != DeviceConnectionState.connected) {
+      _connectedDeviceName = null;
+    }
     _connectionStateController.add(state);
   }
 }

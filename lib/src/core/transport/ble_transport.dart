@@ -31,6 +31,7 @@ class BleTransport implements DeviceTransport {
   DeviceConnectionState _currentConnectionState =
       DeviceConnectionState.disconnected;
   String? _connectedDeviceId;
+  String? _connectedDeviceName;
   bool _isScanning = false;
   bool _isDisposed = false;
 
@@ -64,6 +65,9 @@ class BleTransport implements DeviceTransport {
 
   @override
   String? get connectedDeviceId => _connectedDeviceId;
+
+  @override
+  String? get connectedDeviceName => _connectedDeviceName;
 
   @override
   int get negotiatedMtu => _negotiatedMtu;
@@ -121,6 +125,7 @@ class BleTransport implements DeviceTransport {
         nextState == DeviceConnectionState.error ||
         nextState == DeviceConnectionState.connectionLost) {
       _connectedDeviceId = null;
+      _connectedDeviceName = null;
       _negotiatedMtu = 0;
     }
 
@@ -134,6 +139,7 @@ class BleTransport implements DeviceTransport {
   void _handleConnectionError(Object error, StackTrace stackTrace) {
     _currentConnectionState = DeviceConnectionState.disconnected;
     _connectedDeviceId = null;
+    _connectedDeviceName = null;
     _connectionStateController.addError(error, stackTrace);
   }
 
@@ -199,6 +205,7 @@ class BleTransport implements DeviceTransport {
     if (_isScanning) {
       _isScanning = false;
     }
+    _connectedDeviceName = device.name;
     await _platform.connect(device.deviceId);
   }
 
@@ -229,6 +236,7 @@ class BleTransport implements DeviceTransport {
     _isScanning = false;
     _currentConnectionState = DeviceConnectionState.disconnected;
     _connectedDeviceId = null;
+    _connectedDeviceName = null;
 
     await _discoveredDevicesController.close();
     await _connectionStateController.close();

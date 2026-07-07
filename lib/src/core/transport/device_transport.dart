@@ -32,6 +32,9 @@ abstract class DeviceTransport {
   /// The device ID of the currently connected device, if any.
   String? get connectedDeviceId;
 
+  /// The advertised name of the currently connected device, if known.
+  String? get connectedDeviceName;
+
   /// The negotiated BLE ATT MTU value, or 0 if not yet negotiated.
   int get negotiatedMtu;
 
