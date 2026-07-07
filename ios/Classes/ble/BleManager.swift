@@ -20,6 +20,7 @@ final class BleManager: NSObject {
     private var isScanning = false
     private var connectionReady = false
     private var isDisposed = false
+    private var pendingStartScanResult: FlutterResult?
 
     init(
         scanEventHandler: ScanEventHandler,
@@ -34,6 +35,9 @@ final class BleManager: NSObject {
     }
 
     func isBluetoothAvailable() -> Bool {
+        // Bluetooth hardware is considered available on all states except .unsupported
+        // .unknown is the initial state before the central manager is ready
+        // .poweredOff, .unauthorized, .resetting all mean hardware exists but isn't ready
         centralManager.state != .unsupported
     }
 
@@ -42,7 +46,24 @@ final class BleManager: NSObject {
     }
 
     func requestBluetoothPermissions() -> Bool {
-        centralManager.state == .poweredOn
+        // On iOS, Bluetooth permissions are requested automatically by the system
+        // when CBCentralManager is initialized. If the user denied permission,
+        // the state will be .unauthorized and we cannot re-prompt programmatically.
+        // The user must go to Settings to grant permission.
+        switch centralManager.state {
+        case .poweredOn:
+            return true
+        case .unauthorized:
+            // Permission was denied; return false so the Flutter layer can
+            // show a dialog directing the user to Settings
+            return false
+        case .unknown:
+            // Central manager is still initializing; return true optimistically
+            // since the permission dialog may still be shown by the system
+            return true
+        default:
+            return false
+        }
     }
 
     func startScan(result: @escaping FlutterResult) {
@@ -53,6 +74,22 @@ final class BleManager: NSObject {
                     message: "BLE manager disposed"
                 )
             )
+            return
+        }
+
+        // If the central manager is still initializing (unknown state),
+        // defer the scan until the state resolves.
+        if centralManager.state == .unknown {
+            if isScanning {
+                result(
+                    NativeErrorMapper.flutterError(
+                        code: BleConstants.scanAlreadyRunningError,
+                        message: "BLE scan is already running"
+                    )
+                )
+                return
+            }
+            pendingStartScanResult = result
             return
         }
 
@@ -253,6 +290,17 @@ final class BleManager: NSObject {
         stopScanInternal()
         completePendingResultsOnDispose()
 
+        // Complete any deferred scan operation
+        if let deferredResult = pendingStartScanResult {
+            deferredResult(
+                NativeErrorMapper.flutterError(
+                    code: BleConstants.unknownError,
+                    message: "BLE manager disposed"
+                )
+            )
+            pendingStartScanResult = nil
+        }
+
         if let peripheral = activePeripheral {
             peripheral.delegate = nil
             if peripheral.state != .disconnected {
@@ -423,11 +471,33 @@ final class BleManager: NSObject {
 
 extension BleManager: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
-        if central.state == .poweredOn || isDisposed {
+        guard !isDisposed else { return }
+
+        if central.state == .poweredOn {
+            // Execute any deferred scan operation that was queued while
+            // the central manager was still initializing (unknown state).
+            if let deferredResult = pendingStartScanResult {
+                pendingStartScanResult = nil
+                discoveredPeripherals.removeAll()
+                centralManager.scanForPeripherals(
+                    withServices: [BleConstants.serviceUUID],
+                    options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
+                )
+                isScanning = true
+                deferredResult(nil)
+            }
             return
         }
 
+        // Bluetooth is no longer available (poweredOff, unauthorized, unsupported, etc.)
         stopScanInternal()
+
+        // Fail any deferred scan operation
+        if let deferredResult = pendingStartScanResult {
+            let error = NativeErrorMapper.bluetoothStateError(for: central.state)
+            deferredResult(error)
+            pendingStartScanResult = nil
+        }
 
         if pendingConnectResult != nil {
             let error = NativeErrorMapper.bluetoothStateError(for: central.state)
