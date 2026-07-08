@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:unified_device_sdk/unified_device_sdk.dart';
 
 import 'screens/soil_test_connection_screen.dart';
+import 'screens/soil_test_screen.dart';
 
 class DebugConsoleScreen extends StatefulWidget {
   final UnifiedDevicePlatform? platform;
@@ -250,7 +251,9 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
   Future<void> _openSoilTestFlow() async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => SoilTestConnectionScreen(platform: _platform),
+        builder: (_) => _client.isSessionActive
+            ? SoilTestScreen(client: _client)
+            : SoilTestConnectionScreen(platform: _platform, client: _client),
       ),
     );
   }
@@ -526,6 +529,15 @@ class _DebugConsoleScreenState extends State<DebugConsoleScreen> {
             Text('Bluetooth available: ${_bluetoothAvailable ?? '-'}'),
             Text('Bluetooth enabled: ${_bluetoothEnabled ?? '-'}'),
             Text('Permissions granted: ${_permissionsGranted ?? '-'}'),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _busy ? null : _openSoilTestFlow,
+                icon: const Icon(Icons.science_outlined),
+                label: const Text('Try Soil Test'),
+              ),
+            ),
             const SizedBox(height: 12),
             Wrap(
               spacing: 12,

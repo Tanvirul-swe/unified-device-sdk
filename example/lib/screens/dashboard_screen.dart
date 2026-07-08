@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:unified_device_sdk/unified_device_sdk.dart';
 
 import 'soil_test_connection_screen.dart';
+import 'soil_test_screen.dart';
 import '../widgets/connection_status_bar.dart';
 import '../widgets/device_scan_panel.dart';
 import '../widgets/command_panel.dart';
@@ -167,7 +168,9 @@ class _DashboardScreenState extends State<DashboardScreen>
   Future<void> _openSoilTestFlow() async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => SoilTestConnectionScreen(platform: _platform),
+        builder: (_) => _client.isSessionActive
+            ? SoilTestScreen(client: _client)
+            : SoilTestConnectionScreen(platform: _platform, client: _client),
       ),
     );
   }

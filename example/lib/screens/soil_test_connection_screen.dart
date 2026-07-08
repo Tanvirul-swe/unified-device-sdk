@@ -8,8 +8,9 @@ import 'soil_test_screen.dart';
 
 class SoilTestConnectionScreen extends StatefulWidget {
   final UnifiedDevicePlatform? platform;
+  final UnifiedDeviceClient? client;
 
-  const SoilTestConnectionScreen({super.key, this.platform});
+  const SoilTestConnectionScreen({super.key, this.platform, this.client});
 
   @override
   State<SoilTestConnectionScreen> createState() =>
@@ -18,50 +19,12 @@ class SoilTestConnectionScreen extends StatefulWidget {
 
 class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
   static const int _maxActivityLines = 20;
-  static const List<_ConnectionStep> _steps = <_ConnectionStep>[
-    _ConnectionStep(
-      state: DeviceConnectionState.scanning,
-      title: '1. Scan device',
-      subtitle: 'Discover nearby supported hardware.',
-    ),
-    _ConnectionStep(
-      state: DeviceConnectionState.connected,
-      title: '2. Connect',
-      subtitle: 'Open the BLE link with the selected device.',
-    ),
-    _ConnectionStep(
-      state: DeviceConnectionState.servicesDiscovered,
-      title: '3. Discover services',
-      subtitle: 'Confirm the required GATT services are present.',
-    ),
-    _ConnectionStep(
-      state: DeviceConnectionState.notifySubscribed,
-      title: '4. Subscribe notify',
-      subtitle: 'Enable notification delivery from the device.',
-    ),
-    _ConnectionStep(
-      state: DeviceConnectionState.mtuReady,
-      title: '5. MTU ready',
-      subtitle: 'Complete MTU negotiation or use the default.',
-    ),
-    _ConnectionStep(
-      state: DeviceConnectionState.transportReady,
-      title: '6. UCP transport ready',
-      subtitle: 'BLE transport is ready for UCP frames.',
-    ),
-    _ConnectionStep(
-      state: DeviceConnectionState.sessionActive,
-      title: '7. UCP session active',
-      subtitle: 'Handshake completed. Opening the soil test screen.',
-    ),
-  ];
 
   late final UnifiedDevicePlatform _platform;
   late final UnifiedDeviceClient _client;
   late final List<StreamSubscription<dynamic>> _subscriptions;
 
   final Map<String, DiscoveredDevice> _devices = <String, DiscoveredDevice>{};
-  final Set<DeviceConnectionState> _reachedStates = <DeviceConnectionState>{};
   final List<String> _activityLines = <String>[];
 
   String? _selectedDeviceId;
@@ -73,6 +36,7 @@ class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
   int _pendingActions = 0;
   bool _navigatingToSoilTest = false;
   bool _transferredClientOwnership = false;
+  bool _ownsClient = false;
 
   DiscoveredDevice? get _selectedDevice =>
       _selectedDeviceId == null ? null : _devices[_selectedDeviceId];
@@ -92,18 +56,31 @@ class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
   void initState() {
     super.initState();
     _platform = widget.platform ?? UnifiedDevicePlatform.instance;
-    _client = UnifiedDeviceClient(
-      UnifiedDeviceClientConfig(
-        transport: BleTransport(platform: _platform),
-        logMode: UcpLogMode.raw,
-      ),
-    );
+    _ownsClient = widget.client == null;
+    _client =
+        widget.client ??
+        UnifiedDeviceClient(
+          UnifiedDeviceClientConfig(
+            transport: BleTransport(platform: _platform),
+            logMode: UcpLogMode.raw,
+          ),
+        );
+    _connectionState =
+        _client.currentSession?.state ?? _client.sessionManager.state;
     _subscriptions = <StreamSubscription<dynamic>>[
       _client.discoveredDevices.listen(_handleDevice),
       _client.connectionState.listen(_handleConnectionState),
       _client.communicationLogs.listen(_handleCommunicationLog),
     ];
     unawaited(_refreshBluetoothStatus());
+    if (_client.isSessionActive) {
+      _navigatingToSoilTest = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          unawaited(_openSoilTestScreen());
+        }
+      });
+    }
   }
 
   @override
@@ -111,7 +88,7 @@ class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
     for (final subscription in _subscriptions) {
       subscription.cancel();
     }
-    if (!_transferredClientOwnership) {
+    if (_ownsClient && !_transferredClientOwnership) {
       unawaited(_client.dispose());
     }
     super.dispose();
@@ -131,17 +108,6 @@ class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
       _bluetoothAvailable = values[1] as bool?;
       _bluetoothEnabled = values[2] as bool?;
     });
-  }
-
-  Future<void> _requestPermissions() async {
-    final granted = await _platform.requestBluetoothPermissions();
-    if (!mounted) {
-      return;
-    }
-    setState(() {
-      _permissionsGranted = granted;
-    });
-    await _refreshBluetoothStatus();
   }
 
   Future<void> _toggleScan() async {
@@ -171,13 +137,6 @@ class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
 
   Future<void> _disconnect() async {
     await _runAction('Disconnect', _client.disconnect, allowWhileBusy: true);
-  }
-
-  Future<void> _retryBootstrap() async {
-    await _runAction('Retry bootstrap', () async {
-      await _client.sessionManager.bootstrap();
-      await _client.sessionManager.waitUntilSessionActive();
-    });
   }
 
   Future<void> _runAction(
@@ -222,7 +181,6 @@ class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
   void _handleConnectionState(DeviceConnectionState state) {
     setState(() {
       _connectionState = state;
-      _reachedStates.add(state);
       if (state == DeviceConnectionState.disconnected ||
           state == DeviceConnectionState.connectionLost) {
         _selectedDeviceId = null;
@@ -255,11 +213,11 @@ class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
     if (!mounted) {
       return;
     }
-    _transferredClientOwnership = true;
+    _transferredClientOwnership = _ownsClient;
     await Navigator.of(context).pushReplacement(
       MaterialPageRoute<void>(
         builder: (_) =>
-            SoilTestScreen(client: _client, disposeClientOnExit: true),
+            SoilTestScreen(client: _client, disposeClientOnExit: _ownsClient),
       ),
     );
   }
@@ -312,13 +270,6 @@ class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
     };
   }
 
-  bool _stepReached(DeviceConnectionState state) {
-    if (_connectionState == DeviceConnectionState.sessionActive) {
-      return true;
-    }
-    return _reachedStates.contains(state);
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -349,8 +300,7 @@ class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
             bluetoothEnabled: _bluetoothEnabled,
             permissionsGranted: _permissionsGranted,
           ),
-          const SizedBox(height: 16),
-          _buildIntroCard(),
+
           const SizedBox(height: 16),
           _buildConnectionActionsCard(),
           const SizedBox(height: 16),
@@ -362,72 +312,57 @@ class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
     );
   }
 
-  Widget _buildIntroCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            Text(
-              'Try Soil Test',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-            ),
-            SizedBox(height: 8),
-            Text(
-              'Use this flow to scan hardware, bootstrap the BLE/UCP session, '
-              'and continue directly into the soil test demo.',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildConnectionActionsCard() {
+    final theme = Theme.of(context);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Connection Actions',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
             ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
+            const SizedBox(height: 4),
+            Text(
+              'Use scan, connect, and disconnect only. The session will continue automatically after connect.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
               children: [
-                OutlinedButton(
-                  onPressed: _busy ? null : _refreshBluetoothStatus,
-                  child: const Text('Refresh Status'),
+                Expanded(
+                  child: _compactActionButton(
+                    filled: true,
+                    onPressed: _busy ? null : _toggleScan,
+                    icon: _client.isScanning
+                        ? Icons.stop_circle_outlined
+                        : Icons.search_rounded,
+                    label: _client.isScanning ? 'Stop' : 'Scan',
+                  ),
                 ),
-                OutlinedButton(
-                  onPressed: _busy ? null : _requestPermissions,
-                  child: const Text('Request Permissions'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _compactActionButton(
+                    onPressed: _busy || !_canConnect ? null : _connectSelected,
+                    icon: Icons.link_rounded,
+                    label: 'Connect',
+                  ),
                 ),
-                FilledButton(
-                  onPressed: _busy ? null : _toggleScan,
-                  child: Text(_client.isScanning ? 'Stop Scan' : 'Scan'),
-                ),
-                OutlinedButton(
-                  onPressed: _busy || !_canConnect ? null : _connectSelected,
-                  child: const Text('Connect'),
-                ),
-                OutlinedButton(
-                  onPressed: !_canDisconnect ? null : _disconnect,
-                  child: const Text('Disconnect'),
-                ),
-                OutlinedButton(
-                  onPressed:
-                      _busy ||
-                          _client.isSessionActive ||
-                          _connectionState != DeviceConnectionState.connected
-                      ? null
-                      : _retryBootstrap,
-                  child: const Text('Retry Bootstrap'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _compactActionButton(
+                    onPressed: !_canDisconnect ? null : _disconnect,
+                    icon: Icons.link_off_rounded,
+                    label: 'Disconnect',
+                    danger: true,
+                  ),
                 ),
               ],
             ),
@@ -437,6 +372,49 @@ class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
     );
   }
 
+  Widget _compactActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback? onPressed,
+    bool filled = false,
+    bool danger = false,
+  }) {
+    final style = filled
+        ? FilledButton.styleFrom(
+            minimumSize: const Size.fromHeight(38),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            textStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          )
+        : OutlinedButton.styleFrom(
+            minimumSize: const Size.fromHeight(38),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+            textStyle: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+            foregroundColor: danger ? Colors.red.shade700 : null,
+            side: danger && onPressed != null
+                ? BorderSide(color: Colors.red.shade300)
+                : null,
+          );
+
+    final child = Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: 16),
+        const SizedBox(width: 6),
+        Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+      ],
+    );
+
+    if (filled) {
+      return FilledButton(onPressed: onPressed, style: style, child: child);
+    }
+    return OutlinedButton(onPressed: onPressed, style: style, child: child);
+  }
 
   Widget _buildDeviceListCard() {
     return Card(
@@ -499,16 +477,4 @@ class _SoilTestConnectionScreenState extends State<SoilTestConnectionScreen> {
       ),
     );
   }
-}
-
-class _ConnectionStep {
-  final DeviceConnectionState state;
-  final String title;
-  final String subtitle;
-
-  const _ConnectionStep({
-    required this.state,
-    required this.title,
-    required this.subtitle,
-  });
 }

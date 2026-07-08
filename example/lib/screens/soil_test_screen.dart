@@ -36,7 +36,6 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
   late final List<StreamSubscription<dynamic>> _subscriptions;
 
   SoilTestFlowStage _stage = SoilTestFlowStage.connecting;
-  DeviceConnectionState _connectionState = DeviceConnectionState.disconnected;
   UcpMoistureSample? _latestMoistureSample;
   UcpLastReport? _lastReport;
   String _progressMessage = 'Waiting for an active UCP session.';
@@ -51,8 +50,6 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
   void initState() {
     super.initState();
     _client = widget.client;
-    _connectionState =
-        _client.currentSession?.state ?? DeviceConnectionState.disconnected;
     _stage = _client.isSessionActive
         ? SoilTestFlowStage.readyToStartMoisture
         : SoilTestFlowStage.connecting;
@@ -230,7 +227,6 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
       return;
     }
     setState(() {
-      _connectionState = state;
       if (state == DeviceConnectionState.sessionActive &&
           _stage == SoilTestFlowStage.connecting) {
         _stage = SoilTestFlowStage.readyToStartMoisture;
@@ -645,8 +641,9 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
           ],
         ),
       ),
+      bottomNavigationBar: _buildBottomActionBar(theme),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           _buildHeroCard(theme),
           const SizedBox(height: 16),
@@ -660,9 +657,8 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
           ],
           _buildProgressCard(theme),
           const SizedBox(height: 16),
-          _buildActionCard(theme),
-          const SizedBox(height: 16),
           _buildActivityCard(theme),
+          const SizedBox(height: 88),
         ],
       ),
     );
@@ -741,10 +737,7 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
                       ? 'Session Active'
                       : 'Session Pending',
                 ),
-                _heroChip(
-                  icon: Icons.sensors_outlined,
-                  label: _stateLabel(_connectionState),
-                ),
+
                 _heroChip(icon: Icons.flag_outlined, label: _stageLabel()),
               ],
             ),
@@ -778,41 +771,40 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
+            Row(
               children: [
-                _metricTile(
-                  theme,
-                  icon: Icons.bluetooth_connected,
-                  label: 'Connection',
-                  value: _stateLabel(_connectionState),
-                  color: _stageColor(theme),
+                Expanded(
+                  child: _metricTile(
+                    theme,
+                    icon: Icons.vpn_key_outlined,
+                    label: 'Session',
+                    value: _client.isSessionActive ? 'Ready' : 'Pending',
+                    color: _client.isSessionActive
+                        ? const Color(0xFF2E7D32)
+                        : Colors.orange.shade700,
+                  ),
                 ),
-                _metricTile(
-                  theme,
-                  icon: Icons.vpn_key_outlined,
-                  label: 'Session',
-                  value: _client.isSessionActive ? 'Ready' : 'Pending',
-                  color: _client.isSessionActive
-                      ? const Color(0xFF2E7D32)
-                      : Colors.orange.shade700,
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _metricTile(
+                    theme,
+                    icon: Icons.water_drop_outlined,
+                    label: 'Stream',
+                    value: _activeStreamLabel(),
+                    color: _client.currentSession?.streamActive ?? false
+                        ? const Color(0xFF0277BD)
+                        : Colors.grey.shade700,
+                  ),
                 ),
-                _metricTile(
-                  theme,
-                  icon: Icons.water_drop_outlined,
-                  label: 'Stream',
-                  value: _activeStreamLabel(),
-                  color: _client.currentSession?.streamActive ?? false
-                      ? const Color(0xFF0277BD)
-                      : Colors.grey.shade700,
-                ),
-                _metricTile(
-                  theme,
-                  icon: Icons.route_outlined,
-                  label: 'Current Step',
-                  value: _flowSummaryLabel(),
-                  color: _stageColor(theme),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _metricTile(
+                    theme,
+                    icon: Icons.route_outlined,
+                    label: 'Step',
+                    value: _flowSummaryLabel(),
+                    color: _stageColor(theme),
+                  ),
                 ),
               ],
             ),
@@ -897,57 +889,13 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
               ],
             ),
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                _softInfoChip(
-                  theme,
-                  icon: Icons.tune,
-                  label: 'Raw ${sample?.rawValue ?? '--'}',
-                ),
-                _softInfoChip(
-                  theme,
-                  icon: Icons.memory_outlined,
-                  label: _client.currentSession?.streamActive ?? false
-                      ? 'Stream running'
-                      : 'Stream stopped',
-                ),
-              ],
+            _softInfoChip(
+              theme,
+              icon: Icons.memory_outlined,
+              label: _client.currentSession?.streamActive ?? false
+                  ? 'Stream running'
+                  : 'Stream stopped',
             ),
-            if ((sample?.text ?? '').isNotEmpty) ...[
-              const SizedBox(height: 14),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.5,
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(
-                      Icons.chat_bubble_outline,
-                      size: 18,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        sample!.text!,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                          height: 1.35,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
           ],
         ),
       ),
@@ -1009,13 +957,6 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
                 ),
                 _resultMetricTile(
                   theme,
-                  'Temperature',
-                  report.temperature,
-                  Icons.thermostat_outlined,
-                ),
-                _resultMetricTile(theme, 'EC', report.ec, Icons.bolt_outlined),
-                _resultMetricTile(
-                  theme,
                   'pH',
                   report.ph,
                   Icons.science_outlined,
@@ -1030,9 +971,10 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
 
   Widget _buildProgressCard(ThemeData theme) {
     final hasError = _stage == SoilTestFlowStage.error && _errorMessage != null;
+    final stageColor = _stageColor(theme);
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1050,47 +992,74 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
                     fontWeight: FontWeight.w700,
                   ),
                 ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: stageColor.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    _stageLabel(),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: stageColor,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+            Row(
               children: [
-                _stepChip(
-                  theme,
-                  icon: Icons.link_outlined,
-                  label: 'Connect',
-                  complete: _stepComplete('connect'),
-                  active: _stepActive('connect'),
+                Expanded(
+                  child: _progressStepNode(
+                    theme,
+                    icon: Icons.link_outlined,
+                    label: 'Connect',
+                    complete: _stepComplete('connect'),
+                    active: _stepActive('connect'),
+                  ),
                 ),
-                _stepChip(
-                  theme,
-                  icon: Icons.water_drop_outlined,
-                  label: 'Moisture',
-                  complete: _stepComplete('moisture'),
-                  active: _stepActive('moisture'),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _progressStepNode(
+                    theme,
+                    icon: Icons.water_drop_outlined,
+                    label: 'Moisture',
+                    complete: _stepComplete('moisture'),
+                    active: _stepActive('moisture'),
+                  ),
                 ),
-                _stepChip(
-                  theme,
-                  icon: Icons.biotech_outlined,
-                  label: 'Soil Test',
-                  complete: _stepComplete('test'),
-                  active: _stepActive('test'),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _progressStepNode(
+                    theme,
+                    icon: Icons.biotech_outlined,
+                    label: 'Test',
+                    complete: _stepComplete('test'),
+                    active: _stepActive('test'),
+                  ),
                 ),
-                _stepChip(
-                  theme,
-                  icon: Icons.inventory_2_outlined,
-                  label: 'Report',
-                  complete: _stepComplete('report'),
-                  active: _stepActive('report'),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _progressStepNode(
+                    theme,
+                    icon: Icons.inventory_2_outlined,
+                    label: 'Report',
+                    complete: _stepComplete('report'),
+                    active: _stepActive('report'),
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: hasError
                     ? theme.colorScheme.error.withValues(alpha: 0.08)
@@ -1114,78 +1083,64 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
                         ? theme.colorScheme.error
                         : theme.colorScheme.primary,
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
                   Expanded(
-                    child: Text(
-                      _progressMessage,
-                      style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          hasError ? 'Issue' : 'Status',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: hasError
+                                ? theme.colorScheme.error
+                                : theme.colorScheme.primary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          hasError ? _errorMessage! : _progressMessage,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
-            if (hasError) ...[
-              const SizedBox(height: 12),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.error.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(
-                      Icons.warning_amber_rounded,
-                      size: 18,
-                      color: theme.colorScheme.error,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _errorMessage!,
-                        style: TextStyle(color: theme.colorScheme.error),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildActionCard(ThemeData theme) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+  Widget _buildBottomActionBar(ThemeData theme) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        decoration: BoxDecoration(
+          color: theme.scaffoldBackgroundColor,
+          border: Border(
+            top: BorderSide(color: theme.dividerColor.withValues(alpha: 0.6)),
+          ),
+        ),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(_primaryButtonIcon(), size: 20, color: _stageColor(theme)),
-                const SizedBox(width: 8),
-                Text(
-                  'Primary Action',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
             Text(
               _stageDescription(),
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
-                height: 1.4,
+                height: 1.35,
               ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
@@ -1305,8 +1260,7 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
     required Color color,
   }) {
     return Container(
-      constraints: const BoxConstraints(minWidth: 145, maxWidth: 180),
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(12),
@@ -1314,21 +1268,24 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(height: 10),
+          Icon(icon, size: 16, color: color),
+          const SizedBox(height: 8),
           Text(
             label,
-            style: theme.textTheme.labelMedium?.copyWith(
+            style: theme.textTheme.labelSmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 3),
           Text(
             value,
             style: theme.textTheme.titleSmall?.copyWith(
               fontWeight: FontWeight.w700,
               color: color,
+              fontSize: 10,
             ),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
         ],
       ),
@@ -1402,7 +1359,7 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
     );
   }
 
-  Widget _stepChip(
+  Widget _progressStepNode(
     ThemeData theme, {
     required IconData icon,
     required String label,
@@ -1415,24 +1372,34 @@ class _SoilTestScreenState extends State<SoilTestScreen> {
         ? _stageColor(theme)
         : Colors.grey.shade600;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: complete || active ? 0.10 : 0.06),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.16)),
+        color: color.withValues(alpha: complete || active ? 0.08 : 0.04),
+        borderRadius: BorderRadius.circular(12),
       ),
-      child: Row(
+      child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            complete ? Icons.check_circle_outline : icon,
-            size: 14,
-            color: color,
+          Container(
+            width: 28,
+            height: 28,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              complete ? Icons.check_rounded : icon,
+              size: 15,
+              color: color,
+            ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(height: 6),
           Text(
             label,
-            style: theme.textTheme.labelMedium?.copyWith(
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: theme.textTheme.labelSmall?.copyWith(
               color: color,
               fontWeight: FontWeight.w600,
             ),
